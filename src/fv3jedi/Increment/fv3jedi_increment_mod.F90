@@ -269,6 +269,7 @@ call self%zero()
 do idir=1,ndir
 
   ! Get the field
+  write(6,*)'thinkdeb in fv3jedi_increment_mod.F90,  fieldname is ',trim(ifdir(idir))
   call get_field(self%fields, trim(ifdir(idir)), dirac_field)
 
   ! is specified grid point, tile number on this processor

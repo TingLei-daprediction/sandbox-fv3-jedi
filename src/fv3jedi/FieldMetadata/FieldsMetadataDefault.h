@@ -1846,5 +1846,41 @@ namespace fv3jedi {
     md.levels = "1";
     md.space = "magnitude";
     addFieldMetadata(fieldsmetadata, nlev, md);
+//clt added for temperary use
+    md.longName = "xvar_1";
+    md.units = "ms-1";
+    md.kind = "double";
+    md.tracer = "true";
+    md.levels = "full";
+    md.space = "magnitude";
+    addFieldMetadata(fieldsmetadata, nlev, md);
+    md.longName = "xvar_2";
+    md.units = "ms-1";
+    md.kind = "double";
+    md.tracer = "true";
+    md.levels = "full";
+    md.space = "magnitude";
+    addFieldMetadata(fieldsmetadata, nlev, md);
+    md.longName = "xvar_3";
+    md.units = "ms-1";
+    md.kind = "double";
+    md.tracer = "true";
+    md.levels = "full";
+    md.space = "magnitude";
+    addFieldMetadata(fieldsmetadata, nlev, md);
+    md.longName = "xvar_4";
+    md.units = "ms-1";
+    md.kind = "double";
+    md.tracer = "true";
+    md.levels = "full";
+    md.space = "magnitude";
+    addFieldMetadata(fieldsmetadata, nlev, md);
+    md.longName = "xvar_5";
+    md.units = "ms-1";
+    md.kind = "double";
+    md.tracer = "true";
+    md.levels = "full";
+    md.space = "magnitude";
+    addFieldMetadata(fieldsmetadata, nlev, md);
   }
 }  // namespace fv3jedi
