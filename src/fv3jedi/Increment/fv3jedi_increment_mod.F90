@@ -234,38 +234,44 @@ type(fv3jedi_geom),        intent(in)    :: geom
 ! Locals
 integer :: ndir,idir
 integer, allocatable :: ixdir(:),iydir(:),ildir(:),itdir(:)
-!clt character(len=32), allocatable :: ifdir(:)
 character(len=:), allocatable :: ifdir(:)
 character(len=:), allocatable :: str_array(:)
 logical :: l_dirac_gen_mode
+character(len=:), allocatable :: file_dirac_gen_data 
 type(fv3jedi_field), pointer :: dirac_field
 
 ! Get Diracs positions
 call conf%get_or_die("ndir",ndir)
 ! Optional batch mode switch (default false)
 l_dirac_gen_mode = .false.
+
 call conf%get("dirac generation batch mode", l_dirac_gen_mode)
+if( l_dirac_gen_mode ) then
+   call conf%get("dirac generation file ", file_dirac_gen_data)
+   
+else
 
-allocate(ixdir(ndir))
-allocate(iydir(ndir))
-allocate(ildir(ndir))
-allocate(itdir(ndir))
+   allocate(ixdir(ndir))
+   allocate(iydir(ndir))
+   allocate(ildir(ndir))
+   allocate(itdir(ndir))
 
-if ((conf%get_size("ixdir")/=ndir) .or. &
-    (conf%get_size("iydir")/=ndir) .or. &
-    (conf%get_size("ildir")/=ndir) .or. &
-    (conf%get_size("itdir")/=ndir) .or. &
-    (conf%get_size("ifdir")/=ndir)) &
-  call abor1_ftn("fv3jedi_increment_mod.diracL=: dimension inconsistency")
+   if ((conf%get_size("ixdir")/=ndir) .or. &
+       (conf%get_size("iydir")/=ndir) .or. &
+       (conf%get_size("ildir")/=ndir) .or. &
+       (conf%get_size("itdir")/=ndir) .or. &
+       (conf%get_size("ifdir")/=ndir)) &
+     call abor1_ftn("fv3jedi_increment_mod.diracL=: dimension inconsistency")
 
-call conf%get_or_die("ixdir",ixdir)
-call conf%get_or_die("iydir",iydir)
-call conf%get_or_die("ildir",ildir)
-call conf%get_or_die("itdir",itdir)
+   call conf%get_or_die("ixdir",ixdir)
+   call conf%get_or_die("iydir",iydir)
+   call conf%get_or_die("ildir",ildir)
+   call conf%get_or_die("itdir",itdir)
 
-call conf%get_or_die("ifdir",str_array)
-ifdir = str_array
-deallocate(str_array)
+   call conf%get_or_die("ifdir",str_array)
+   ifdir = str_array
+   deallocate(str_array)
+endif
 
 ! Setup Diracs
 call self%zero()
