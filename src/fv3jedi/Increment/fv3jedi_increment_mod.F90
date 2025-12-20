@@ -236,10 +236,14 @@ integer :: ndir,idir
 integer, allocatable :: ixdir(:),iydir(:),ildir(:),itdir(:)
 character(len=:), allocatable :: ifdir(:)
 character(len=:), allocatable :: str_array(:)
+logical :: l_dirac_gen_mode
 type(fv3jedi_field), pointer :: dirac_field
 
 ! Get Diracs positions
 call conf%get_or_die("ndir",ndir)
+! Optional batch mode switch (default false)
+l_dirac_gen_mode = .false.
+call conf%get("dirac generation batch mode", l_dirac_gen_mode)
 
 allocate(ixdir(ndir))
 allocate(iydir(ndir))
