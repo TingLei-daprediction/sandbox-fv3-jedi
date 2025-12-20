@@ -234,7 +234,8 @@ type(fv3jedi_geom),        intent(in)    :: geom
 ! Locals
 integer :: ndir,idir
 integer, allocatable :: ixdir(:),iydir(:),ildir(:),itdir(:)
-character(len=32), allocatable :: ifdir(:)
+!clt character(len=32), allocatable :: ifdir(:)
+character(len=:), allocatable :: ifdir(:)
 character(len=:), allocatable :: str_array(:)
 type(fv3jedi_field), pointer :: dirac_field
 
@@ -269,6 +270,7 @@ call self%zero()
 do idir=1,ndir
 
   ! Get the field
+  write(6,*)'thinkdeb in fv3jedi_increment_mod.F90,  fieldname is ',trim(ifdir(idir))
   call get_field(self%fields, trim(ifdir(idir)), dirac_field)
 
   ! is specified grid point, tile number on this processor

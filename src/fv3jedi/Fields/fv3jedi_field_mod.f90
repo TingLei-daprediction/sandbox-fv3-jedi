@@ -129,7 +129,7 @@ integer :: var
 logical :: found
 
 if(associated(field)) nullify(field)
-
+write(6,*)'thinkdeb in get_field_return_type_pointer ,field_name',trim(field_name)
 found = .false.
 do var = 1,size(fields)
   if ( trim(fields(var)%long_name) == trim(field_name) ) then
