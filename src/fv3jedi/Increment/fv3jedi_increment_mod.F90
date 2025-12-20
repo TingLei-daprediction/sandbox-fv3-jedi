@@ -232,12 +232,14 @@ type(fckit_configuration), intent(in)    :: conf
 type(fv3jedi_geom),        intent(in)    :: geom
 
 ! Locals
-integer :: ndir,idir
+integer :: ndir,idir, ndir_conf
 integer, allocatable :: ixdir(:),iydir(:),ildir(:),itdir(:)
 character(len=:), allocatable :: ifdir(:)
 character(len=:), allocatable :: str_array(:)
 logical :: l_dirac_gen_mode
 character(len=:), allocatable :: file_dirac_gen_data 
+integer :: nvar_dir, n_idir, n_jdir
+integer :: iunit
 type(fv3jedi_field), pointer :: dirac_field
 
 ! Get Diracs positions
@@ -248,7 +250,38 @@ l_dirac_gen_mode = .false.
 call conf%get("dirac generation batch mode", l_dirac_gen_mode)
 if( l_dirac_gen_mode ) then
    call conf%get("dirac generation file ", file_dirac_gen_data)
-   
+
+   if (.not. allocated(file_dirac_gen_data)) &
+     call abor1_ftn("fv3jedi_increment_mod.dirac: dirac generation file not provided")
+
+   open(newunit=iunit, file=trim(file_dirac_gen_data), status='old', action='read')
+   read(iunit,*) nvar_dir, n_idir, n_jdir
+
+   call conf%get_or_die("ifdir",str_array)
+   ifdir = str_array
+   deallocate(str_array)
+   if (size(ifdir) /= nvar_dir) then
+      call abor1_ftn("fv3jedi_increment_mod.dirac: nvar_dir mismatch with ifdir size")
+   endif
+
+   ndir = n_idir * n_jdir
+
+   allocate(ixdir(ndir))
+   allocate(iydir(ndir))
+   allocate(ildir(ndir))
+   allocate(itdir(ndir))
+
+   call conf%get_or_die("ildir",ildir)
+   call conf%get_or_die("itdir",itdir)
+   if (size(ildir) /= ndir .or. size(itdir) /= ndir) then
+      call abor1_ftn("fv3jedi_increment_mod.dirac: ildir/itdir size mismatch in batch mode")
+   endif
+
+   do idir = 1, ndir
+     read(iunit,*) ixdir(idir), iydir(idir)
+   enddo
+   close(iunit)
+
 else
 
    allocate(ixdir(ndir))
