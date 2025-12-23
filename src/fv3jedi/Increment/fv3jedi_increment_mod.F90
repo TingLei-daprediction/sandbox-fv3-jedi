@@ -247,12 +247,11 @@ call conf%get_or_die("ndir",ndir)
 ! Optional batch mode switch (default false)
 l_dirac_gen_mode = .false.
 
-call conf%get("dirac generation batch mode", l_dirac_gen_mode)
+if (.not. conf%get("dirac generation batch mode", l_dirac_gen_mode)) l_dirac_gen_mode = .false.
 if( l_dirac_gen_mode ) then
-   call conf%get("dirac generation file ", file_dirac_gen_data)
-
-   if (.not. allocated(file_dirac_gen_data)) &
+   if (.not. conf%get("dirac generation file ", file_dirac_gen_data)) &
      call abor1_ftn("fv3jedi_increment_mod.dirac: dirac generation file not provided")
+
 
    open(newunit=iunit, file=trim(file_dirac_gen_data), status='old', action='read')
    read(iunit,*) nvar_dir, n_idir, n_jdir

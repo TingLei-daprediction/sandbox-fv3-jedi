@@ -57,6 +57,10 @@ class DiracParameters : public oops::Parameters {
   oops::RequiredParameter<std::vector<int>> itdir{"itdir", this};
   // Vector (length n) with name of field
   oops::RequiredParameter<std::vector<std::string>> ifdir{"ifdir", this};
+  // Optional batch generation mode (used by Fortran dirac generation path)
+  oops::OptionalParameter<bool> diracGenBatchMode{"dirac generation batch mode", this};
+  // Optional file for batch generation mode (note trailing space in Fortran key)
+  oops::OptionalParameter<std::string> diracGenFile{"dirac generation file ", this};
 };
 
 // -------------------------------------------------------------------------------------------------
