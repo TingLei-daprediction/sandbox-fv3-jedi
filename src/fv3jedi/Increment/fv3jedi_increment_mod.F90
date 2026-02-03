@@ -238,22 +238,28 @@ character(len=:), allocatable :: ifdir(:)
 character(len=:), allocatable :: str_array(:)
 logical :: l_dirac_gen_mode
 character(len=:), allocatable :: file_dirac_gen_data 
-integer :: nvar_dir, n_idir, n_jdir
-integer :: iunit
+integer :: nvar_dir, n_idir, n_jdir,ivar_dir
+integer :: iunit,i
+
 type(fv3jedi_field), pointer :: dirac_field
 
 ! Get Diracs positions
 call conf%get_or_die("ndir",ndir)
 ! Optional batch mode switch (default false)
-l_dirac_gen_mode = .false.
 
 if (.not. conf%get("dirac generation batch mode", l_dirac_gen_mode)) l_dirac_gen_mode = .false.
 if( l_dirac_gen_mode ) then
    if (.not. conf%get("dirac generation file ", file_dirac_gen_data)) &
      call abor1_ftn("fv3jedi_increment_mod.dirac: dirac generation file not provided")
+endif
+write(6,*)'thinkdeb999 l_dira_gen_mod ',l_dirac_gen_mode
+if( l_dirac_gen_mode ) then
 
 
    open(newunit=iunit, file=trim(file_dirac_gen_data), status='old', action='read')
+   do i=1,3
+   read (iunit,*)
+   enddo
    read(iunit,*) nvar_dir, n_idir, n_jdir
 
    call conf%get_or_die("ifdir",str_array)
@@ -264,23 +270,28 @@ if( l_dirac_gen_mode ) then
    endif
 
    ndir = n_idir * n_jdir
+   write(6,*)'thinkdeb999ndir ',ndir
 
    allocate(ixdir(ndir))
    allocate(iydir(ndir))
-   allocate(ildir(ndir))
    allocate(itdir(ndir))
 
    call conf%get_or_die("ildir",ildir)
+
+!   call conf%get_or_die("ildir",ildir)
    call conf%get_or_die("itdir",itdir)
-   if (size(ildir) /= ndir .or. size(itdir) /= ndir) then
+   write(6,*)'thinkdeb999size of ildir  ',size(ildir)
+   if (size(ildir) /= nvar_dir .or. size(itdir) /= nvar_dir) then
       call abor1_ftn("fv3jedi_increment_mod.dirac: ildir/itdir size mismatch in batch mode")
    endif
 
    do idir = 1, ndir
-     read(iunit,*) ixdir(idir), iydir(idir)
+     read(iunit,*)i,i,i, ixdir(idir), iydir(idir)
    enddo
    close(iunit)
-
+   do idir = 1, ndir
+   write(6,*)"thinkdeb998 ix/ydir ",ixdir(idir),' ',iydir(idir)
+   enddo
 else
 
    allocate(ixdir(ndir))
@@ -309,23 +320,43 @@ endif
 call self%zero()
 
 ! only u, v, T, ps and tracers allowed
-do idir=1,ndir
 
-  ! Get the field
-  write(6,*)'thinkdeb in fv3jedi_increment_mod.F90,  fieldname is ',trim(ifdir(idir))
-  call get_field(self%fields, trim(ifdir(idir)), dirac_field)
+if(.not. l_dirac_gen_mode ) then
+   do idir=1,ndir
 
-  ! is specified grid point, tile number on this processor
-  if (geom%ntile == itdir(idir) .and. &
-    ixdir(idir) >= self%isc .and. ixdir(idir) <= self%iec .and. &
-    iydir(idir) >= self%jsc .and. iydir(idir) <= self%jec) then
+     ! Get the field
+     write(6,*)'thinkdeb in fv3jedi_increment_mod.F90,  fieldname is ',trim(ifdir(idir))
+     call get_field(self%fields, trim(ifdir(idir)), dirac_field)
 
-    ! Make perturbation
-    dirac_field%array(ixdir(idir),iydir(idir),ildir(idir)) = 1.0_kind_real
+     ! is specified grid point, tile number on this processor
+     if (geom%ntile == itdir(idir) .and. &
+       ixdir(idir) >= self%isc .and. ixdir(idir) <= self%iec .and. &
+       iydir(idir) >= self%jsc .and. iydir(idir) <= self%jec) then
 
-  endif
+       ! Make perturbation
+       dirac_field%array(ixdir(idir),iydir(idir),ildir(idir)) = 1.0_kind_real
 
-enddo
+     endif
+
+   enddo
+else
+   do ivar_dir=1,nvar_dir
+     call get_field(self%fields, trim(ifdir(ivar_dir)), dirac_field)
+     write(6,*)'thinkdeb999 ndir is ',ndir
+     do idir=1,ndir
+      if (geom%ntile == itdir(ivar_dir) .and. &
+       ixdir(idir) >= self%isc .and. ixdir(idir) <= self%iec .and. &
+       iydir(idir) >= self%jsc .and. iydir(idir) <= self%jec) then
+       write(6,*)'thinkdeb9991 in  ',trim(ifdir(ivar_dir)),' i,j ',ixdir(idir),iydir(idir)
+
+       ! Make perturbation
+       dirac_field%array(ixdir(idir),iydir(idir),ildir(ivar_dir)) = 1.0_kind_real
+
+      endif
+    enddo
+   enddo
+     
+endif
 
 end subroutine dirac
 
