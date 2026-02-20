@@ -71,7 +71,7 @@ contains
     class(mpi_io_arrange) :: this
 !
     this%ntotalcore=ntotalcore
-
+    write(6,*)'thinkdeb222 in init ntotalcore= ',ntotalcore
     allocate(this%fileid(ntotalcore))
     allocate(this%varname(ntotalcore))
     allocate(this%vartype(ntotalcore))
@@ -135,7 +135,6 @@ contains
     integer :: i,j,k,n,nn,n3d,nz
 !
 ! start  allocate memory
-!
     ntotalcore=this%ntotalcore
     allocate(fileid(ntotalcore))
     allocate(varname(ntotalcore))
@@ -144,6 +143,8 @@ contains
     allocate(lvlend(ntotalcore))
     allocate(nx(ntotalcore))
     allocate(ny(ntotalcore))
+    write(6,*)'thinkdeb222 ntotalcore is ',ntotalcore
+    call flush(6)
     varname=""
     fileid=0
     vartype=0
@@ -181,10 +182,12 @@ contains
     if( ntotalcore-nlvl2d-nlvl3d_small < nlvl3d ) then
         write(6,*) 'not enough cores for the paralleli IO',ntotalcore-nlvl2d-nlvl3d_small,nlvl3d
         stop 123
+        call flush(6)
     endif
 !
 ! decide how many cores can be used for each 3d field
-!
+     write(6,*)'thinkdeb222 '
+     call flush(6)
     if(nlvl3d > 0) then
       allocate(nlvl3d_list(nlvl3d))
       nlvlcore=(ntotalcore-nlvl2d-nlvl3d_small)/nlvl3d
@@ -197,6 +200,8 @@ contains
       endif
       write(6,*) 'cores for each 3D fields=',nlvl3d_list
    endif
+     write(6,*)'thinkdeb222 1 '
+     call flush(6)
 !
 !  decide boundary for fileid
 !
@@ -209,6 +214,8 @@ contains
       ib(i)=ie(i-1)+1
       ie(i)=ib(i)+ncfs_all%numvarfile(i)-1
     enddo
+     write(6,*)'thinkdeb222 2 '
+     call flush(6)
 !
 !  decide which levels of a variable to read for each core
 !
@@ -272,10 +279,14 @@ contains
         enddo
     endif
 
+     write(6,*)'thinkdeb222 3'
+     call flush(6)
     ! Need all ranks to know the global dimensions.  Assume all variables have the soam horizontal dimensions
     where(nx(:)==0) nx=nx(1)
     where(ny(:)==0) ny=ny(1)
 !
+     write(6,*)'thinkdeb222 4 '
+     call flush(6)
 !  save results
 !
     this%fileid=fileid
@@ -300,6 +311,8 @@ contains
     deallocate(ib)
     deallocate(ie)
 
+     write(6,*)'thinkdeb222 5 '
+     call flush(6)
   end subroutine arrange
 
 end module module_mpi_arrange

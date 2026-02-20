@@ -596,7 +596,7 @@ integer :: iret,ilev,r,ncioid,var_id,loc
 
 integer(kind=4), allocatable :: nlev(:), nlevpervar(:), numvar(:)
 character(len=20), allocatable :: varnames(:)
-class(*), pointer :: globalptr(:,:) => null()
+class(*),contiguous,pointer :: globalptr(:,:) => null()
 class(*), pointer :: localptr(:,:,:) => null()
 
 type(ncfile_stat) :: ncfs_all
@@ -790,13 +790,13 @@ if( (fields_changed) .or. &
   if(allocated(nc_vartype)) deallocate(nc_vartype)
   allocate(nc_vartype(sum(numvar)))
 
+   call mpiioarg%init(npes)
   if(rank==0) then
     ! find dimension of each field
     call ncfs_all%init(totalnumfiles, FileNamesToProcess, numvar, varlist)
     call ncfs_all%fill_dims()
 
     ! distibute variables to each core
-    call mpiioarg%init(npes)
     call mpiioarg%arrange(ncfs_all)
 
     nlev(:)=0
@@ -1178,7 +1178,7 @@ contains
 
     type(fv3jedi_geom), intent(inout):: geom
     integer, intent(in)              :: rank, owner, lev
-    class(*), contiguous, intent(in) :: globalpointer(:,:)
+    class(*), contiguous,pointer, intent(in) :: globalpointer(:,:)
     class(*), contiguous, intent(inout) :: localdata(:,:,:)
 
     class(*), allocatable :: coldata(:,:)
