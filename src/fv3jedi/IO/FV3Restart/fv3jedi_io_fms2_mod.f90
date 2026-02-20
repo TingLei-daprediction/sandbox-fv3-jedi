@@ -599,7 +599,7 @@ integer :: iret,ilev,r,ncioid,var_id,loc
 integer(kind=4), allocatable :: nlev(:), nlevpervar(:), numvar(:)
 character(len=20), allocatable :: varnames(:)
 class(*), contiguous, pointer :: globalptr(:,:) => null()
-class(*), pointer :: localptr(:,:,:) => null()
+class(*), contiguous, pointer :: localptr(:,:,:) => null()
 
 type(ncfile_stat) :: ncfs_all
 type(mpi_io_arrange) :: mpiioarg
@@ -624,8 +624,6 @@ real(kind=8) :: tb1,tb2,tb3, times(3), walltime(3)
 real(kind=8) :: te1,te2,te3
 integer :: totalnumfiles
 integer :: cached_nfields = -1
-!character(len=field_clen), allocatable :: cached_field_names(:)
-!integer, allocatable :: cached_field_nz(:)
 logical :: fields_changed
 integer :: f, nz
 logical :: getdelp
@@ -833,6 +831,7 @@ if( (fields_changed) .or. &
   call MPI_Scatter(mpiioarg%vartype ,  1,   mpi_integer, mype_vartype,  1, mpi_integer  , 0, MPI_COMM_WORLD,ierr)
   call MPI_Scatter(mpiioarg%lvlbegin,  1,   mpi_integer, mype_lbegin ,  1, mpi_integer  , 0, MPI_COMM_WORLD,ierr)
   call MPI_Scatter(mpiioarg%lvlend  ,  1,   mpi_integer, mype_lend   ,  1, mpi_integer  , 0, MPI_COMM_WORLD,ierr)
+  call mpiioarg%close()
 
   call MPI_Bcast(ntotallev, 1, mpi_integer, 0, MPI_COMM_WORLD,ierr)
   call MPI_Bcast(nlev, npes, mpi_integer, 0, MPI_COMM_WORLD,ierr)
@@ -944,7 +943,6 @@ if( (fields_changed) .or. &
   allocate(cached_field_nz(cached_nfields))
   do f = 1, cached_nfields
     cached_field_names(f) = fields(f)%long_name
-    !if(rank==0) write(6,'("read_restart_fields_newest: Set cached_field_names ",I4,5A)') f,' (', trim(cached_field_names(f)),') == (', trim(fields(f)%long_name),')'
     if (allocated(fields(f)%array)) then
       cached_field_nz(f) = size(fields(f)%array, 3)
     else
@@ -1052,7 +1050,6 @@ endif
     iret=nf90_open(trim(FileNamesToProcess(mype_fileid)),ior(nf90_nowrite,nf90_mpiio),ncioid,comm=read_comm,info=MPI_INFO_NULL)
     if(iret/=nf90_noerr) then
       write(6,'("read_restart_fields_newest: Error opening NetCDF file ",2A,I4,A,I4)') trim(FileNamesToProcess(mype_fileid)),' fileid=',mype_fileid,', Status =',iret
-      !write(6,*)' problem opening ', trim(FileNamesToProcess(mype_fileid)),' fileid=',mype_fileid,', Status =',iret
       write(6,*)  nf90_strerror(iret)
       stop 333
     endif
@@ -1103,18 +1100,20 @@ endif
         l=l+1
       endif
       localptr => fields(var2)%array(:,:,:)
-      call TwoPhaseScatterPolymorphic(geom, rank, LevelToProcMap(level), globalptr, LevelToLevelMap(level), fields(var2)%array)
+      call TwoPhaseScatterPolymorphic(geom, rank, LevelToProcMap(level), globalptr, LevelToLevelMap(level), localptr)
       nullify(localptr)
     elseif(nc_vartype(var) == NF90_FLOAT .and. kind_real == c_double) then
       if(rank==LevelToProcMap(level)) then
         globalptr => d3r4(:,:,l) ! Only the owner of the slab sets globalptr
         l=l+1
       endif
+      localptr => fields(var2)%array_file_scatter(:,:,:)
       select type (an => fields(var2)%array_file_scatter)
       type is (real(kind=c_float))
-        call TwoPhaseScatterPolymorphic(geom, rank, LevelToProcMap(level), globalptr, 1, fields(var2)%array_file_scatter)
+        call TwoPhaseScatterPolymorphic(geom, rank, LevelToProcMap(level), globalptr, 1, localptr)
         fields(var2)%array(:,:,LevelToLevelMap(level)) = real(an(:,:,1), kind=kind_real)
       end select
+      nullify(localptr)
     elseif(nc_vartype(var) == NF90_DOUBLE .and. kind_real == c_double) then
       !write(6,'("TwoPhaseScatter: same type ",5I6,2A)') var,var2,level, LevelToProcMap(level), LevelToLevelMap(level),' ',trim(fields(var2)%long_name)
       if(rank==LevelToProcMap(level)) then
@@ -1122,7 +1121,7 @@ endif
         l=l+1
       endif
       localptr => fields(var2)%array(:,:,:)
-      call TwoPhaseScatterPolymorphic(geom, rank, LevelToProcMap(level), globalptr, LevelToLevelMap(level), fields(var2)%array)
+      call TwoPhaseScatterPolymorphic(geom, rank, LevelToProcMap(level), globalptr, LevelToLevelMap(level), localptr)
       nullify(localptr)
     elseif(nc_vartype(var) == NF90_DOUBLE .and. kind_real == c_float) then
       if(rank==LevelToProcMap(level)) then
@@ -1193,8 +1192,8 @@ contains
 
     type(fv3jedi_geom), intent(inout):: geom
     integer, intent(in)              :: rank, owner, lev
-    class(*), contiguous,pointer, intent(in) :: globalpointer(:,:)
-    class(*), contiguous, intent(inout) :: localdata(:,:,:)
+    class(*), contiguous, pointer, intent(in) :: globalpointer(:,:)
+    class(*), contiguous, pointer, intent(inout) :: localdata(:,:,:)
 
     class(*), allocatable :: coldata(:,:)
     integer :: temptype, mpiprec
@@ -1636,7 +1635,6 @@ do n = 1, numfiles
 
       call check( nf90_inq_varid(ncid(n), trim(fields(var2)%model_name), varid) )
       call check( nf90_var_par_access(ncid(n), varid, nf90_collective) )
-      !rc = nf90_var_par_access(ncid(n), varid, nf90_independent)
 
       start = (/ geom%isc,  geom%jsc,  1 /)
       counts= (/ geom%localsizes(1), geom%localsizes(2), size(fields(var2)%array,3) /)
