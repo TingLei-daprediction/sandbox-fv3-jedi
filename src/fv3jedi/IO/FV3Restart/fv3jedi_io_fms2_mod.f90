@@ -76,6 +76,9 @@ endtype file_t
   character(len=NF90_MAX_NAME), allocatable :: FileNamesToProcess(:)
   logical :: rstflag(numfiles)
 
+  character(len=field_clen), allocatable :: cached_field_names(:)
+  integer, allocatable :: cached_field_nz(:)
+
 type fv3jedi_io_fms
  logical :: is_restart
  logical :: input_is_date_templated
@@ -546,7 +549,6 @@ enddo
 ! -------------------------------
 do n = 1, numfiles
   if (rstflag(n)) then
-     if(mpp_pe() == 0) write(6,'("read_restart_fields: Reading restart ",A)') trim(self%filenames(n))
      call read_restart(fileobj(n), ignore_checksum=self%ignore_checksum)
      call close_file(fileobj(n))
   endif
@@ -596,7 +598,7 @@ integer :: iret,ilev,r,ncioid,var_id,loc
 
 integer(kind=4), allocatable :: nlev(:), nlevpervar(:), numvar(:)
 character(len=20), allocatable :: varnames(:)
-class(*),contiguous,pointer :: globalptr(:,:) => null()
+class(*), contiguous, pointer :: globalptr(:,:) => null()
 class(*), pointer :: localptr(:,:,:) => null()
 
 type(ncfile_stat) :: ncfs_all
@@ -622,8 +624,8 @@ real(kind=8) :: tb1,tb2,tb3, times(3), walltime(3)
 real(kind=8) :: te1,te2,te3
 integer :: totalnumfiles
 integer :: cached_nfields = -1
-character(len=field_clen), allocatable :: cached_field_names(:)
-integer, allocatable :: cached_field_nz(:)
+!character(len=field_clen), allocatable :: cached_field_names(:)
+!integer, allocatable :: cached_field_nz(:)
 logical :: fields_changed
 integer :: f, nz
 logical :: getdelp
@@ -654,33 +656,40 @@ fields_changed = .false.
 ! If cache not initialized, force rebuild
 if (cached_nfields < 0) then
   fields_changed = .true.
+  !if(rank==0) write(6,'("read_restart_fields_newest: Init fields_changed")')
 elseif (cached_nfields /= size(fields)) then
   fields_changed = .true.
+  !if(rank==0) write(6,'("read_restart_fields_newest: cached_nfields /= size(fields)",2I4)') cached_nfields,size(fields)
 elseif (.not. allocated(cached_field_names) .or. .not. allocated(cached_field_nz)) then
   fields_changed = .true.
+  !if(rank==0) write(6,'("read_restart_fields_newest: cached_field_names or cached_field_nz not allocated cached_field_nz")')
 elseif (size(cached_field_names) /= size(fields) .or. size(cached_field_nz) /= size(fields)) then
   fields_changed = .true.
-else
-  do f = 1, size(fields)
-    if (allocated(fields(f)%array)) then
-      nz = size(fields(f)%array, 3)
-    else
-      nz = -1
-    endif
+  !if(rank==0) write(6,'("read_restart_fields_newest: size of cached_field_names or cached_field_nz not right")')
+!else
+!  do f = 1, size(fields)
+!    if (allocated(fields(f)%array)) then
+!      nz = size(fields(f)%array, 3)
+!    else
+!      nz = -1
+!    endif
 
-    if (trim(fields(f)%model_name) /= trim(cached_field_names(f))) then
-      fields_changed = .true.
-      exit
-    endif
-    if (nz /= cached_field_nz(f)) then
-      fields_changed = .true.
-      exit
-    endif
-  enddo
+!    !if (trim(fields(f)%model_name) /= trim(cached_field_names(f))) then
+!    !if (trim(ioname(trim(fields(f)%long_name), field_io_names_local)) /= trim(cached_field_names(f))) then
+!    if (trim(fields(f)%long_name) /= trim(cached_field_names(f))) then
+!      fields_changed = .true.
+!      if(rank==0) write(6,'("read_restart_fields_newest: field name order is different",I4,5A)') f,' (', trim(fields(f)%long_name),') /= (', trim(cached_field_names(f)),')'
+!      exit
+!    endif
+!    if (nz /= cached_field_nz(f)) then
+!      fields_changed = .true.
+!      if(rank==0) write(6,'("read_restart_fields_newest: nz is different")')
+!      exit
+!    endif
+!  enddo
 endif
 
-
-!if(rank==0) write(6,'("read_restart_fields_newest: Global Dimensions ",2I6)') geom%globalsizes(1),geom%globalsizes(2)
+!if(rank==0) write(6,'("read_restart_fields_newest: Global Dimensions ",2L,2I6)') first_pass,fields_changed,geom%globalsizes(1),geom%globalsizes(2)
 
 ! If the Geometry changes, reallocate Scatter structure and rescan input files
 ! Do this only for the first ensemble member to save significant time
@@ -790,7 +799,9 @@ if( (fields_changed) .or. &
   if(allocated(nc_vartype)) deallocate(nc_vartype)
   allocate(nc_vartype(sum(numvar)))
 
-   call mpiioarg%init(npes)
+  ! init on all ranks to avoid passing unallocated allocatable to MPI_Scatter
+  call mpiioarg%init(npes)
+
   if(rank==0) then
     ! find dimension of each field
     call ncfs_all%init(totalnumfiles, FileNamesToProcess, numvar, varlist)
@@ -925,11 +936,6 @@ if( (fields_changed) .or. &
        call mpi_abort(mpi_comm_world,101,ierr)
   endif
 
-  first_pass = .false.
-
-  te1 = MPI_Wtime()
-  times(1) = te1-tb1
-
   ! Update cached fields after successful rebuild
   cached_nfields = size(fields)
   if (allocated(cached_field_names)) deallocate(cached_field_names)
@@ -937,13 +943,19 @@ if( (fields_changed) .or. &
   allocate(cached_field_names(cached_nfields))
   allocate(cached_field_nz(cached_nfields))
   do f = 1, cached_nfields
-    cached_field_names(f) = fields(f)%model_name
+    cached_field_names(f) = fields(f)%long_name
+    !if(rank==0) write(6,'("read_restart_fields_newest: Set cached_field_names ",I4,5A)') f,' (', trim(cached_field_names(f)),') == (', trim(fields(f)%long_name),')'
     if (allocated(fields(f)%array)) then
       cached_field_nz(f) = size(fields(f)%array, 3)
     else
       cached_field_nz(f) = -1
     endif
   enddo
+
+  first_pass = .false.
+
+  te1 = MPI_Wtime()
+  times(1) = te1-tb1
 
 endif ! First pass
 
@@ -1037,9 +1049,10 @@ endif
         write(6,*) 'Warning, unknown datatype'
      endif
 
-    iret=nf90_open(trim(FileNamesToProcess(mype_fileid)),nf90_nowrite,ncioid,comm=read_comm,info=MPI_INFO_NULL)
+    iret=nf90_open(trim(FileNamesToProcess(mype_fileid)),ior(nf90_nowrite,nf90_mpiio),ncioid,comm=read_comm,info=MPI_INFO_NULL)
     if(iret/=nf90_noerr) then
-      write(6,*)' problem opening ', trim(FileNamesToProcess(mype_fileid)),' fileid=',mype_fileid,', Status =',iret
+      write(6,'("read_restart_fields_newest: Error opening NetCDF file ",2A,I4,A,I4)') trim(FileNamesToProcess(mype_fileid)),' fileid=',mype_fileid,', Status =',iret
+      !write(6,*)' problem opening ', trim(FileNamesToProcess(mype_fileid)),' fileid=',mype_fileid,', Status =',iret
       write(6,*)  nf90_strerror(iret)
       stop 333
     endif
@@ -1049,6 +1062,8 @@ endif
       counts=(/geom%globalsizes(1), geom%globalsizes(2), 1/)
 
       call check( nf90_inq_varid(ncioid, trim(adjustl(mype_varname)), var_id) )
+      !iret = nf90_var_par_access(ncioid, var_id, nf90_collective)
+      iret = nf90_var_par_access(ncioid, var_id, nf90_independent)
 
       if(mype_vartype==NF90_FLOAT) then
         d2r4ptr => d3r4(:,:,ilev)
@@ -1621,6 +1636,7 @@ do n = 1, numfiles
 
       call check( nf90_inq_varid(ncid(n), trim(fields(var2)%model_name), varid) )
       call check( nf90_var_par_access(ncid(n), varid, nf90_collective) )
+      !rc = nf90_var_par_access(ncid(n), varid, nf90_independent)
 
       start = (/ geom%isc,  geom%jsc,  1 /)
       counts= (/ geom%localsizes(1), geom%localsizes(2), size(fields(var2)%array,3) /)
@@ -1926,14 +1942,16 @@ if (index(trim(field%long_name), 'fraction_of_land') /= 0) io_file = 'orography'
 ! Cold start variables if name contains cold
 if (index(trim(field%long_name), 'cold') /= 0) io_file = 'cold'
 
-! Multi-level soils go in surface
+! 4 level soils go in surface
 if (trim(field%long_name) == 'stc') io_file = 'surface'
 if (trim(field%long_name) == 'soilMoistureVolumetric') io_file = 'surface'
-if (trim(field%long_name) == 'tslb') io_file = 'surface'
-if (trim(field%long_name) == 'smois') io_file = 'surface'
 
 ! Reflectivity is in phy_data
 if (trim(field%long_name) == 'equivalent_reflectivity_factor') io_file = 'physics'
+
+! Soil fixes since these are now 3d variables
+if (trim(field%long_name) == 'soilt') io_file = 'surface'
+if (trim(field%long_name) == 'soilm') io_file = 'surface'
 
 
 ! Set the filename index
