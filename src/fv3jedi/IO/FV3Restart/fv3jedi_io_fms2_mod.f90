@@ -512,17 +512,9 @@ do var = 1,size(fields)
 
 
     ! Create io name lookup
-<<<<<<< HEAD
-    !call field_io_names_local%set("air_pressure_thickness", "delp") ! SKD
     if (.not. field_io_names_local%has("air_pressure_thickness")) then
       call field_io_names_local%set("air_pressure_thickness", "delp")
     end if
-
-=======
-    if (.not. field_io_names_local%has("air_pressure_thickness")) then
-      call field_io_names_local%set("air_pressure_thickness", "delp")
-    end if
->>>>>>> develop
   endif
 
   ! Get file to use
