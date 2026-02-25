@@ -58,8 +58,7 @@ type :: fv3jedi_geom
   integer, allocatable :: NumColsPerRank(:), NumRowsPerRank(:)
   integer, allocatable :: MyRowGlobal(:), MyColGlobal(:)
   integer, allocatable :: MyRankInRowComm(:), MyRankInColComm(:)
-  integer :: colComm, rowComm, rowrank, colrank, k                                  !MPI Communicators and indexes used in the two-phase scatter
-  integer :: color,IOComm,IORank,IOCommSize                                         !MPI Communicator use in the one-level-per-rank read approach
+  integer :: colComm, rowComm, rowrank, colrank                                     !MPI Communicators and indexes used in the two-phase scatter
   integer :: globalsizes(2), localsizes(2)
 
   real(kind=kind_real) :: ptop                                                      !Pressure at top of domain
@@ -361,14 +360,6 @@ call MPI_AllGather(self%jec,1,MPI_integer,self%jend(0:)  ,1,MPI_integer, self%ro
   endif
   call MPI_Bcast(self%NumColsPerRank,size(self%NumColsPerRank),MPI_Integer,0,MPI_COMM_WORLD,ierr)
   call MPI_Bcast(self%NumRowsPerRank,size(self%NumRowsPerRank),MPI_Integer,0,MPI_COMM_WORLD,ierr)
-
-  ! Create a sub-communicator to handle reads
-  self%color=0
-  if (self%k>0) self%color=1
-
-  call MPI_Comm_split(mpi_comm_world, self%color, mpp_pe(), self%IOComm, ierr)
-  call MPI_Comm_rank(self%IOComm,self%IORank,ierr)
-  call MPI_Comm_size(self%IOComm,self%IOCommSize,ierr)
 
   ! Horizontal dimensions of ensemble input files
   self%globalsizes(1) = self%npx-1
@@ -707,7 +698,6 @@ deallocate(self%lon_us)
 call self%afunctionspace%final()
 call self%geometry_fields%final()
 
-call MPI_Comm_free(self%IOComm, ierr)
 call MPI_Comm_free(self%rowComm, ierr)
 call MPI_Comm_free(self%colComm, ierr)
 
