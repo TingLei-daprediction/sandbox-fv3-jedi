@@ -643,6 +643,32 @@ self%field_masks = other%field_masks
 
 self%field_interp_methods = other%field_interp_methods
 
+self%EWindex = other%EWindex
+self%NSindex = other%NSindex
+self%colComm = other%colComm
+self%rowComm = other%rowComm
+self%rowrank = other%rowrank
+self%colrank = other%colrank
+
+allocate(self%ibegin(0:self%layout(1)-1), self%iend(0:self%layout(1)-1))
+allocate(self%jbegin(0:self%layout(2)-1), self%jend(0:self%layout(2)-1))
+self%ibegin = other%ibegin
+self%iend   = other%iend
+self%jbegin = other%jbegin
+self%jend   = other%jend
+
+allocate(self%MyRowGlobal(0:mpp_npes()-1), self%MyColGlobal(0:mpp_npes()-1))
+self%MyRowGlobal = other%MyRowGlobal
+self%MyColGlobal = other%MyColGlobal
+
+allocate(self%MyRankInRowComm(0:mpp_npes()-1), self%MyRankInColComm(0:mpp_npes()-1))
+self%MyRankInRowComm = other%MyRankInRowComm
+self%MyRankInColComm = other%MyRankInColComm
+
+allocate(self%NumColsPerRank(0:self%layout(2)-1), self%NumRowsPerRank(0:self%layout(1)-1))
+self%NumColsPerRank = other%NumColsPerRank
+self%NumRowsPerRank = other%NumRowsPerRank
+
 end subroutine clone
 
 ! --------------------------------------------------------------------------------------------------
