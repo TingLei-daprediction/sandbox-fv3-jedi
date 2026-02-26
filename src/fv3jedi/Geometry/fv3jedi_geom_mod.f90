@@ -516,6 +516,8 @@ class(fv3jedi_geom),        intent(inout) :: self
 type(fv3jedi_geom), target, intent(in)    :: other
 type(fields_metadata),      intent(in)    :: fmd
 
+integer :: ierr
+
 allocate(self%ak(other%npz+1) )
 allocate(self%bk(other%npz+1) )
 
@@ -645,10 +647,12 @@ self%field_interp_methods = other%field_interp_methods
 
 self%EWindex = other%EWindex
 self%NSindex = other%NSindex
-self%colComm = other%colComm
-self%rowComm = other%rowComm
+call MPI_Comm_dup(other%colComm, self%colComm, ierr)
+call MPI_Comm_dup(other%rowComm, self%rowComm, ierr)
 self%rowrank = other%rowrank
 self%colrank = other%colrank
+self%globalsizes = other%globalsizes
+self%localsizes = other%localsizes
 
 allocate(self%ibegin(0:self%layout(1)-1), self%iend(0:self%layout(1)-1))
 allocate(self%jbegin(0:self%layout(2)-1), self%jend(0:self%layout(2)-1))
