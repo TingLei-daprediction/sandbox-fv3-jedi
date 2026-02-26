@@ -1948,6 +1948,9 @@ if (trim(field%long_name) == 'equivalent_reflectivity_factor') io_file = 'physic
 ! Soil fixes since these are now 3d variables
 if (trim(field%long_name) == 'soilt') io_file = 'surface'
 if (trim(field%long_name) == 'soilm') io_file = 'surface'
+if (trim(field%long_name) == 'smois') io_file = 'surface'
+if (trim(field%long_name) == 'tslb') io_file = 'surface'
+if (trim(field%long_name) == 'slb') io_file = 'surface'
 
 
 ! Set the filename index
