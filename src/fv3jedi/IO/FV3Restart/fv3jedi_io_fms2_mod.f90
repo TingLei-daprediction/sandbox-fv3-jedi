@@ -43,7 +43,7 @@ public fv3jedi_io_fms
 ! If adding a new file it is added here and object and config in setup
 integer, parameter :: numfiles = 9
 
-!Scatter type
+! Scatter type
 type :: scatter_t
   logical :: lalloc = .false.
   integer, allocatable :: sendcounts_row(:), senddispls_row(:)
@@ -59,28 +59,29 @@ type :: file_t
   integer(kind=4) :: VariableIndecies(50) = -999  ! Store JEDI domain field/variable indecies found in each file
 endtype file_t
 
-! sub communicator
-  integer :: read_comm
+! Subcommunicator
+integer :: read_comm
 
-  integer :: ntotallev
-  integer :: mype_lbegin,mype_lend
-  integer :: mype_vartype
-  integer :: mype_fileid
-  integer :: globalsizes(2)=0  ! Local copy of the grid dimensions needed in order to track changes (dual resolution cases)
-  logical :: first_pass = .true. ! Some arrays need only be allocated once
-  logical :: need_to_reallocate_ps = .false. ! Some arrays need only be allocated once
-  character(len=20) :: mype_varname
+integer :: ntotallev
+integer :: mype_lbegin,mype_lend
+integer :: mype_vartype
+integer :: mype_fileid
+integer :: globalsizes(2)=0  ! Local copy of the grid dimensions needed in order to track changes (dual resolution cases)
+logical :: first_pass = .true. ! Some arrays need only be allocated once
+logical :: need_to_reallocate_ps = .false. ! Some arrays need only be allocated once
+character(len=20) :: mype_varname
 
-  integer(kind=4), allocatable :: LevelToProcMap(:), LevelToVariableMap(:), LevelToLevelMap(:), VarToVarMap(:)
-  integer(kind=4), allocatable :: nc_vartype(:)
-  character(len=NF90_MAX_NAME), allocatable :: FileNamesToProcess(:)
-  logical :: rstflag(numfiles)
+integer(kind=4), allocatable :: LevelToProcMap(:), LevelToVariableMap(:), LevelToLevelMap(:), VarToVarMap(:)
+integer(kind=4), allocatable :: nc_vartype(:)
+character(len=NF90_MAX_NAME), allocatable :: FileNamesToProcess(:)
+logical :: rstflag(numfiles)
 
-  character(len=field_clen), allocatable :: cached_field_names(:)
-  integer, allocatable :: cached_field_nz(:)
+character(len=field_clen), allocatable :: cached_field_names(:)
+integer, allocatable :: cached_field_nz(:)
 
 type fv3jedi_io_fms
  logical :: is_restart
+ logical :: regional_restart
  logical :: input_is_date_templated
  character(len=128) :: datapath
  character(len=128) :: filename_nonrestart ! For non-restarts
@@ -139,6 +140,11 @@ if (conf%has("is restart")) then
 else
   self%is_restart = .true.
 endif
+
+! Check if files are regional restarts
+! If so, we can use new, parallelized routines
+! --------------------------------------------
+call conf%get_or_die("regional restart", self%regional_restart)
 
 ! Get path to files
 ! -----------------
@@ -324,8 +330,12 @@ if ( self%is_restart ) then
 
    ! Read fields
    ! -----------
-   !call read_restart_fields(self, geom, fields, field_io_names, field_io_scaling)
-   call read_restart_fields_newest(self, geom, fields, field_io_names, field_io_scaling)
+   if (.not. self%regional_restart) then
+      call read_restart_fields(self, geom, fields, field_io_names, field_io_scaling)
+   else
+      call read_restart_fields_reg(self, geom, fields, field_io_names, field_io_scaling)
+   end if
+
 else
    ! Read fields
    ! -----------
@@ -352,8 +362,11 @@ call setup_date(self, vdate)
 if ( self%is_restart ) then
    ! Write metadata and fields
    ! -------------------------
-   !call write_restart_all(self, geom, fields, vdate, field_io_names, field_io_scaling)
-   call write_restart_all_new3(self, geom, fields, vdate, field_io_names, field_io_scaling)
+   if (.not. self%regional_restart) then
+      call write_restart_all(self, geom, fields, vdate, field_io_names, field_io_scaling)
+   else
+      call write_restart_all_reg(self, geom, fields, vdate, field_io_names, field_io_scaling)
+   end if
 else
    ! Write fields
    ! ------------
@@ -510,7 +523,6 @@ do var = 1,size(fields)
     fields(indexof_ps)%long_name = 'air_pressure_thickness'
     fields(indexof_ps)%npz = self%npz
 
-
     ! Create io name lookup
     if (.not. field_io_names_local%has("air_pressure_thickness")) then
       call field_io_names_local%set("air_pressure_thickness", "delp")
@@ -522,8 +534,6 @@ do var = 1,size(fields)
 
   ! Flag to read this restart
   if ( .not. rstflag(indexrst) ) then
-     fileobj(indexrst)%use_collective = .true.
-     fileobj(indexrst)%tile_comm = mpp_get_domain_tile_commid(self%domain)
      if ( open_file(fileobj(indexrst), &
           trim(self%datapath)//'/'//trim(self%filenames(indexrst)), &
           "read", self%domain, is_restart=.true., dont_add_res_to_filename=.true.) ) then
@@ -574,7 +584,7 @@ end subroutine read_restart_fields
 
 ! --------------------------------------------------------------------------------------------------
 
-subroutine read_restart_fields_newest(self, geom, fields, field_io_names, field_io_scaling)
+subroutine read_restart_fields_reg(self, geom, fields, field_io_names, field_io_scaling)
 use module_ncfile_stat, only : ncfile_stat
 use module_mpi_arrange, only : mpi_io_arrange
 use netcdf
@@ -652,40 +662,13 @@ fields_changed = .false.
 ! If cache not initialized, force rebuild
 if (cached_nfields < 0) then
   fields_changed = .true.
-  !if(rank==0) write(6,'("read_restart_fields_newest: Init fields_changed")')
 elseif (cached_nfields /= size(fields)) then
   fields_changed = .true.
-  !if(rank==0) write(6,'("read_restart_fields_newest: cached_nfields /= size(fields)",2I4)') cached_nfields,size(fields)
 elseif (.not. allocated(cached_field_names) .or. .not. allocated(cached_field_nz)) then
   fields_changed = .true.
-  !if(rank==0) write(6,'("read_restart_fields_newest: cached_field_names or cached_field_nz not allocated cached_field_nz")')
 elseif (size(cached_field_names) /= size(fields) .or. size(cached_field_nz) /= size(fields)) then
   fields_changed = .true.
-  !if(rank==0) write(6,'("read_restart_fields_newest: size of cached_field_names or cached_field_nz not right")')
-!else
-!  do f = 1, size(fields)
-!    if (allocated(fields(f)%array)) then
-!      nz = size(fields(f)%array, 3)
-!    else
-!      nz = -1
-!    endif
-
-!    !if (trim(fields(f)%model_name) /= trim(cached_field_names(f))) then
-!    !if (trim(ioname(trim(fields(f)%long_name), field_io_names_local)) /= trim(cached_field_names(f))) then
-!    if (trim(fields(f)%long_name) /= trim(cached_field_names(f))) then
-!      fields_changed = .true.
-!      if(rank==0) write(6,'("read_restart_fields_newest: field name order is different",I4,5A)') f,' (', trim(fields(f)%long_name),') /= (', trim(cached_field_names(f)),')'
-!      exit
-!    endif
-!    if (nz /= cached_field_nz(f)) then
-!      fields_changed = .true.
-!      if(rank==0) write(6,'("read_restart_fields_newest: nz is different")')
-!      exit
-!    endif
-!  enddo
 endif
-
-!if(rank==0) write(6,'("read_restart_fields_newest: Global Dimensions ",2L,2I6)') first_pass,fields_changed,geom%globalsizes(1),geom%globalsizes(2)
 
 ! If the Geometry changes, reallocate Scatter structure and rescan input files
 ! Do this only for the first ensemble member to save significant time
@@ -711,10 +694,6 @@ if( (fields_changed) .or. &
   endif
   allocate(Scatter(0:npes-1))
 
-  !do var = 1,size(fields)
-  !  if(rank==0) write(6,'("read_restart_fields_newest: Variables to process ",L,I4,2A)') first_pass, var,' ',trim(fields(var)%long_name)
-  !enddo
-
   ! Loop over fields to identify their restart file
   ! Only enter here if its the first time fv3jedi_io_fms::read() is called.
   ! Reusing the arrays generated in the first call saves a bunch of walltime.
@@ -722,18 +701,15 @@ if( (fields_changed) .or. &
   ! -------------------------------------------------------------------------
   rstflag(:) = .false.
   do var = 1,size(fields)
-    !if(rank==0) write(6,'("read_restart_fields_newest: Scan files for variable ",I4,2A)') var,' ',trim(fields(var)%long_name)
     ! If need ps is not in file will compute from delp so read delp in place of ps, but only if delp is NOT already present in the fields array
     if (trim(fields(var)%long_name) == 'air_pressure_at_surface' .and. .not.self%ps_in_file) then
       indexof_ps = var
-      !write(6,'("read_restart_fields_newest: indexof_ps ",I4,L,I4)') indexof_ps,havedelp,indexof_delp
-      if (havedelp) then ! SKD NEW EDIT
-        fields(indexof_ps)%model_name = ''   ! PS will be computed, not read ! SKD NEW EDIT
-        cycle ! Do not register delp twice ! SKD NEW EDIT
+      if (havedelp) then
+        fields(indexof_ps)%model_name = ''   ! PS will be computed, not read
+        cycle ! Do not register delp twice
       else
         ! Reallocate fields array for ps (2D) to hold delp (3D) instead.  Set need_to_reallocate_ps to true so this gets done for every ensemble member
         need_to_reallocate_ps = .true.
-        !write(6,'("read_restart_fields_newest: reallocating space for air_pressure_at_surface to make room for delp ",3I4)') indexof_ps,size(fields(indexof_ps)%array,3),self%npz
         deallocate(fields(indexof_ps)%array)
         allocate(fields(indexof_ps)%array(fields(indexof_ps)%isc:fields(indexof_ps)%iec, &
                  fields(indexof_ps)%jsc:fields(indexof_ps)%jec,1:self%npz))
@@ -741,13 +717,11 @@ if( (fields_changed) .or. &
         fields(indexof_ps)%npz = self%npz
         ! Create io name lookup.  Reuse name from config file
         if ( field_io_names%get("air_pressure_thickness", str) ) then
-          !write(6,'("read_restart_fields_newest: Using string from config ",A)') trim(str)
           call field_io_names_local%set("air_pressure_thickness", trim(str))
         else
-          !write(6,'("read_restart_fields_newest: Taking a WAG as to name of delp in the input files",A)')
           call field_io_names_local%set("air_pressure_thickness", "delp")
         endif
-      endif ! SKD NEW EDIT
+      endif
     endif
 
     ! Get file to use
@@ -755,7 +729,6 @@ if( (fields_changed) .or. &
 
     ! Get UFS variable name
     fields(var)%model_name = ioname(trim(fields(var)%long_name), field_io_names_local)
-    !write(6,'("read_restart_fields_newest: JEDI -> UFS variable mapping ",I4,4A)') var,' ',trim(fields(var)%long_name),' -> ',trim(fields(var)%model_name)
 
     ! Append variable name onto list for each file.  Will need a mapping between this list and the order in the fields array
     if (len_trim(tmpvarlist(indexrst)) > 0) then
@@ -817,7 +790,6 @@ if( (fields_changed) .or. &
     nlevpervar(:ncfs_all%numvar) = ncfs_all%dim_3(:)
     varnames(:ncfs_all%numvar) = ncfs_all%list_varname(:)  ! Names of vcariables to be processed
     nc_vartype(:ncfs_all%numvar) = ncfs_all%vartype(:)        ! NetCDF type of each variable
-    !write(6,'("read_restart_fields_newest: total number of variables to read ",2I4)') ncfs_all%numvar, sum(numvar)
     call ncfs_all%close()
   endif
 
@@ -851,7 +823,7 @@ if( (fields_changed) .or. &
   enddo
 
   if (any(LevelToProcMap(:) == -999)) then
-    write(6,'("read_restart_fields_newest: Some sigma level were not assigned")')
+    write(6,'("read_restart_fields_reg: Some sigma level were not assigned")')
     call MPI_Abort(MPI_COMM_WORLD,10,ierr)
   endif
 
@@ -870,10 +842,9 @@ if( (fields_changed) .or. &
 
   if (any(LevelToVariableMap(:) == -999)) then
     loc = findloc(LevelToVariableMap, value=-999, dim=1, back=.false.)
-    write(6,'("read_restart_fields_newest: Some variables were not assigned ",2I6)') ntotallev,loc
+    write(6,'("read_restart_fields_reg: Some variables were not assigned ",2I6)') ntotallev,loc
     call MPI_Abort(MPI_COMM_WORLD,11,ierr)
   endif
-
 
   ! Map combined level to variable level
   ! LevelToLevelMap(levelIndex) gives an index into fields(var)%array
@@ -890,7 +861,7 @@ if( (fields_changed) .or. &
   deallocate(nlevpervar)
 
   if (any(LevelToLevelMap(:) == -999)) then
-    write(6,'("read_restart_fields_newest: Some levels were not assigned")')
+    write(6,'("read_restart_fields_reg: Some levels were not assigned")')
     call MPI_Abort(MPI_COMM_WORLD,12,ierr)
   endif
 
@@ -902,7 +873,6 @@ if( (fields_changed) .or. &
   VarToVarMap(:) = -999
   do var = 1,size(fields)
     do var2 = 1,sum(numvar)
-      !write(6,'("read_restart_fields_newest: VarToVarMap ",2I6,4A)') var, var2,' ',trim(fields(var)%model_name),' ',trim(varnames(var2))
       if (trim(fields(var)%model_name) .ne. trim(varnames(var2))) then
         cycle
       else
@@ -915,7 +885,7 @@ if( (fields_changed) .or. &
   deallocate(numvar)
 
   if (any(VarToVarMap(:) == -999)) then
-    write(6,'("read_restart_fields_newest: Some variables not mapped",21I6)') VarToVarMap(1:sum(numvar))
+    write(6,'("read_restart_fields_reg: Some variables not mapped",21I6)') VarToVarMap(1:sum(numvar))
     call MPI_Abort(MPI_COMM_WORLD,112,ierr)
   endif
 
@@ -961,12 +931,10 @@ if (need_to_reallocate_ps) then
     ! If need ps is not in file will compute from delp so read delp in place of ps, but only if delp is NOT already present in the fields array
     if (trim(fields(var)%long_name) == 'air_pressure_at_surface' .and. .not.self%ps_in_file) then
       indexof_ps = var
-      !write(6,'("read_restart_fields_newest: indexof_ps ",I4,L,I4)') indexof_ps,havedelp,indexof_delp
       if (havedelp) then
-        fields(indexof_ps)%model_name = ''   ! PS will be computed, not read ! SKD NEW EDIT
-        cycle ! Do not register delp twice ! SKD NEW EDIT
+        fields(indexof_ps)%model_name = ''   ! PS will be computed, not read
+        cycle ! Do not register delp twice
       else
-        !write(6,'("read_restart_fields_newest: reallocating space for air_pressure_at_surface to make room for delp ",3I4)') indexof_ps,size(fields(indexof_ps)%array,3),self%npz
         deallocate(fields(indexof_ps)%array)
         allocate(fields(indexof_ps)%array(fields(indexof_ps)%isc:fields(indexof_ps)%iec, &
                  fields(indexof_ps)%jsc:fields(indexof_ps)%jec,1:self%npz))
@@ -974,10 +942,8 @@ if (need_to_reallocate_ps) then
         fields(indexof_ps)%npz = self%npz
         ! Create io name lookup.  Reuse name from config file
         if ( field_io_names%get("air_pressure_thickness", str) ) then
-          !write(6,'("read_restart_fields_newest: Using string from config ",A)') trim(str)
           call field_io_names_local%set("air_pressure_thickness", trim(str))
         else
-          !write(6,'("read_restart_fields_newest: Taking a WAG as to name of delp in the input files",A)')
           call field_io_names_local%set("air_pressure_thickness", "delp")
         endif
       endif
@@ -998,10 +964,8 @@ endif
   ! Only need this when the variable on file has a different byte size than
   ! expected by the application (kind_real)
   tb2 = MPI_Wtime()
-  !do var = 1,size(fields)
-  do var = 1,size(nc_vartype) ! SKD NEW EDIT
+  do var = 1,size(nc_vartype)
     var2 = VarToVarMap(var)
-    !write(6,'("read_restart_fields_newest: Should we allocate scatter space for variable: ",3I4,2A)') nc_vartype(var), var, var2,' ',trim(fields(var2)%long_name)
     select case (nc_vartype(var))
     case (NF90_SHORT)
       write(6,'("NF90_SHORT data type not supported")')
@@ -1014,13 +978,8 @@ endif
       if(kind_real /= c_float) then
         allocate(real(kind=c_float) :: fields(var2)%array_file_scatter(geom%localsizes(1), geom%localsizes(2), 1))
       endif
-    case (NF90_DOUBLE)
-      if(kind_real /= c_double) then
-        ! This scenario is handled by reading the r8 field into an r4 array relying on the NetCDF library to do the conversion during the parallel reads
-        !allocate(real(kind=c_double) :: fields(var)%array_file_scatter(geom%localsizes(1), geom%localsizes(2), size(fields(var)%array,3)))
-      endif
     case default
-      write(6,'("read_restart_fields_newest: Unknown NetCDF type for variable: ",3I4,2A)') nc_vartype(var), var, var2,' ',trim(fields(var)%long_name)
+      write(6,'("read_restart_fields_reg: Unknown NetCDF type for variable: ",3I4,2A)') nc_vartype(var), var, var2,' ',trim(fields(var)%long_name)
       call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
     end select
   enddo
@@ -1047,7 +1006,7 @@ endif
 
     iret=nf90_open(trim(FileNamesToProcess(mype_fileid)),ior(nf90_nowrite,nf90_mpiio),ncioid,comm=read_comm,info=MPI_INFO_NULL)
     if(iret/=nf90_noerr) then
-      write(6,'("read_restart_fields_newest: Error opening NetCDF file ",2A,I4,A,I4)') trim(FileNamesToProcess(mype_fileid)),' fileid=',mype_fileid,', Status =',iret
+      write(6,'("read_restart_fields_reg: Error opening NetCDF file ",2A,I4,A,I4)') trim(FileNamesToProcess(mype_fileid)),' fileid=',mype_fileid,', Status =',iret
       write(6,*)  nf90_strerror(iret)
       stop 333
     endif
@@ -1057,7 +1016,6 @@ endif
       counts=(/geom%globalsizes(1), geom%globalsizes(2), 1/)
 
       call check( nf90_inq_varid(ncioid, trim(adjustl(mype_varname)), var_id) )
-      !iret = nf90_var_par_access(ncioid, var_id, nf90_collective)
       iret = nf90_var_par_access(ncioid, var_id, nf90_independent)
 
       if(mype_vartype==NF90_FLOAT) then
@@ -1138,7 +1096,7 @@ endif
   te3 = MPI_Wtime()
   times(3) = te3-tb3
   call MPI_Reduce(times, walltime, 3, MPI_DOUBLE_PRECISION, MPI_MAX, 0, MPI_COMM_WORLD, ierr)
-  if (rank == 0) write(*,'(A,4F12.6)') 'read_restart_fields_newest: Walltimes ', walltime(1), walltime(2), walltime(3), sum(walltime)
+  if (rank == 0) write(*,'(A,4F12.6)') 'read_restart_fields_reg: Walltimes ', walltime(1), walltime(2), walltime(3), sum(walltime)
 
   ! Deallocate temporary arrays
   if (MPI_COMM_NULL /= read_comm) then
@@ -1149,20 +1107,6 @@ endif
   do var = 1,size(fields)
     if (allocated(fields(var)%array_file_scatter)) deallocate(fields(var)%array_file_scatter)
   enddo
-
-! This cleanup needs to happen at the end of the job.
-! I don't know where to put it so just placing here for visibility
-!do r=0,mpp_npes()-1
-!  if (allocated(Scatter(r)%senddispls_col)) deallocate(Scatter(r)%senddispls_col)
-!  if (allocated(Scatter(r)%sendcounts_col)) deallocate(Scatter(r)%sendcounts_col)
-!  if (allocated(Scatter(r)%senddispls_row)) deallocate(Scatter(r)%senddispls_row)
-!  if (allocated(Scatter(r)%sendcounts_row)) deallocate(Scatter(r)%sendcounts_row)
-!  !if (mpp_pe() == 0) write(6,'("fv3jedi_geom::delete: About to free localvec "I6)') r
-!  !if (nlev(r) > 0) call MPI_Type_free(Scatter(r)%localvec, ierror)
-!  !if (nlev(r) > 0) call MPI_Type_free(Scatter(r)%vec, ierror)
-!enddo
-!deallocate(Scatter)
-
 
 ! Compute ps from DELP
 ! --------------------
@@ -1301,7 +1245,7 @@ contains
 
   end subroutine TwoPhaseScatterPolymorphic
 
-end subroutine read_restart_fields_newest
+end subroutine read_restart_fields_reg
 
 ! --------------------------------------------------------------------------------------------------
 
@@ -1446,7 +1390,7 @@ end subroutine write_restart_all
 
 ! --------------------------------------------------------------------------------------------------
 
-subroutine write_restart_all_new3(self, geom, fields, vdate, field_io_names, field_io_scaling)
+subroutine write_restart_all_reg(self, geom, fields, vdate, field_io_names, field_io_scaling)
 
 type(fv3jedi_io_fms),      intent(inout) :: self
 type(fv3jedi_geom),        intent(inout) :: geom
@@ -1587,7 +1531,6 @@ do n = 1, numfiles
       if(size(fields(var2)%array,3) > 1) then
         chunksizes = [geom%globalsizes(1), geom%globalsizes(2), 1, 1]
         call check( nf90_def_var(ncid(n), trim(fields(var2)%model_name), NF90_DOUBLE, dimids, varid, chunksizes=chunksizes) )
-        !call check( nf90_def_var(ncid(n), trim(fields(var2)%model_name), NF90_DOUBLE, dimids, varid, chunksizes=chunksizes, fletcher32=.true.) )
         call check( nf90_put_att(ncid(n), varid, "long_name", trim(fields(var2)%long_name)) )
         call check( nf90_put_att(ncid(n), varid, "units", trim(fields(var2)%units)) )
 
@@ -1600,7 +1543,6 @@ do n = 1, numfiles
       else
         chunksizes = [geom%globalsizes(1), geom%globalsizes(2), 1]
         call check( nf90_def_var(ncid(n), trim(fields(var2)%model_name), NF90_DOUBLE, (/ dimids(1), dimids(2), dimids(4) /), varid, chunksizes=chunksizes) )
-        !call check( nf90_def_var(ncid(n), trim(fields(var2)%model_name), NF90_DOUBLE, (/ dimids(1), dimids(2), dimids(4) /), varid, chunksizes=chunksizes, fletcher32=.true.) )
         call check( nf90_put_att(ncid(n), varid, "long_name", trim(fields(var2)%long_name)) )
         call check( nf90_put_att(ncid(n), varid, "units", trim(fields(var2)%units)) )
 
@@ -1614,7 +1556,6 @@ do n = 1, numfiles
     enddo ! var loop
   endif
 enddo
-
 
 ! Exit define mode
 ! ----------------
@@ -1662,7 +1603,7 @@ if (mpp_pe() == mpp_root_pe() .and. .not. self%skip_coupler) then
    close(101)
 endif
 
-end subroutine write_restart_all_new3
+end subroutine write_restart_all_reg
 
 ! --------------------------------------------------------------------------------------------------
 
@@ -1938,20 +1879,14 @@ if (index(trim(field%long_name), 'fraction_of_land') /= 0) io_file = 'orography'
 ! Cold start variables if name contains cold
 if (index(trim(field%long_name), 'cold') /= 0) io_file = 'cold'
 
-! 4 level soils go in surface
+! Multi-level soils go in surface
 if (trim(field%long_name) == 'stc') io_file = 'surface'
 if (trim(field%long_name) == 'soilMoistureVolumetric') io_file = 'surface'
-
-! Reflectivity is in phy_data
-if (trim(field%long_name) == 'equivalent_reflectivity_factor') io_file = 'physics'
-
-! Soil fixes since these are now 3d variables
-if (trim(field%long_name) == 'soilt') io_file = 'surface'
-if (trim(field%long_name) == 'soilm') io_file = 'surface'
-if (trim(field%long_name) == 'smois') io_file = 'surface'
 if (trim(field%long_name) == 'tslb') io_file = 'surface'
-if (trim(field%long_name) == 'slb') io_file = 'surface'
+if (trim(field%long_name) == 'smois') io_file = 'surface'
 
+! Reflectivity variable goes in physics file
+if (trim(field%long_name) == 'equivalent_reflectivity_factor') io_file = 'physics'
 
 ! Set the filename index
 ! ----------------------
