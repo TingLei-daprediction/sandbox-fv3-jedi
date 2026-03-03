@@ -621,7 +621,7 @@ real(8), pointer, contiguous :: d2r8ptr(:,:) => null()
 real(4),allocatable, target :: d3r4(:,:,:)
 real(8),allocatable, target :: d3r8(:,:,:)
 
-logical :: havedelp
+logical :: havedelp, haveps
 integer :: indexof_ps, indexof_delp
 real(kind=kind_real), allocatable :: delp(:,:,:)
 type(fckit_configuration) :: field_io_names_local
@@ -647,6 +647,7 @@ tmpvarlist=''
 indexof_ps = -1
 indexof_delp = -1
 havedelp = hasfield(fields, 'air_pressure_thickness', indexof_delp)
+haveps = hasfield(fields, 'air_pressure_at_surface', indexof_ps)
 
 num_restart_vars(:)=0
 times(:)=0.0
@@ -662,12 +663,34 @@ fields_changed = .false.
 ! If cache not initialized, force rebuild
 if (cached_nfields < 0) then
   fields_changed = .true.
+  if(rank==0) write(6,'("read_restart_fields_reg: Init fields_changed")')
 elseif (cached_nfields /= size(fields)) then
   fields_changed = .true.
+  if(rank==0) write(6,'("read_restart_fields_reg: cached_nfields /= size(fields)",2I4)') cached_nfields,size(fields)
 elseif (.not. allocated(cached_field_names) .or. .not. allocated(cached_field_nz)) then
   fields_changed = .true.
+  if(rank==0) write(6,'("read_restart_fields_reg: cached_field_names or cached_field_nz not allocated cached_field_nz")')
 elseif (size(cached_field_names) /= size(fields) .or. size(cached_field_nz) /= size(fields)) then
   fields_changed = .true.
+  if(rank==0) write(6,'("read_restart_fields_reg: size of cached_field_names or cached_field_nz not right")')
+else
+  do f = 1, size(fields)
+    if (allocated(fields(f)%array)) then
+      nz = size(fields(f)%array, 3)
+    else
+      nz = -1
+    endif
+    if (trim(fields(f)%long_name) /= trim(cached_field_names(f))) then
+      fields_changed = .true.
+      if(rank==0) write(6,'("read_restart_fields_reg: field name order is different",I4,5A)') f,' (', trim(fields(f)%model_name),') /= (', trim(cached_field_names(f)),')'
+      exit
+    endif
+    if (nz /= cached_field_nz(f)) then
+      fields_changed = .true.
+      if(rank==0) write(6,'("read_restart_fields_reg: nz is different")')
+      exit
+    endif
+  enddo
 endif
 
 ! If the Geometry changes, reallocate Scatter structure and rescan input files
@@ -1108,23 +1131,23 @@ endif
     if (allocated(fields(var)%array_file_scatter)) deallocate(fields(var)%array_file_scatter)
   enddo
 
-! Compute ps from DELP
-! --------------------
-if (indexof_ps > 0) then
-  allocate(delp(fields(indexof_ps)%isc:fields(indexof_ps)%iec, &
-                fields(indexof_ps)%jsc:fields(indexof_ps)%jec,1:self%npz))
-  if (.not. havedelp) then
-    delp = fields(indexof_ps)%array
-    deallocate(fields(indexof_ps)%array)
-    allocate(fields(indexof_ps)%array(fields(indexof_ps)%isc:fields(indexof_ps)%iec, &
-                fields(indexof_ps)%jsc:fields(indexof_ps)%jec,1))
-  else
-    delp = fields(indexof_delp)%array
+  ! Compute ps from DELP
+  ! --------------------
+  if (indexof_ps > 0 .and. .not. self%ps_in_file) then
+    allocate(delp(fields(indexof_ps)%isc:fields(indexof_ps)%iec, &
+                  fields(indexof_ps)%jsc:fields(indexof_ps)%jec,1:self%npz))
+    if (.not. havedelp) then
+      delp = fields(indexof_ps)%array
+      deallocate(fields(indexof_ps)%array)
+      allocate(fields(indexof_ps)%array(fields(indexof_ps)%isc:fields(indexof_ps)%iec, &
+                  fields(indexof_ps)%jsc:fields(indexof_ps)%jec,1))
+    else
+      delp = fields(indexof_delp)%array
+    endif
+    fields(indexof_ps)%array(:,:,1) = geom%ptop + sum(delp,3)
+    fields(indexof_ps)%long_name = 'air_pressure_at_surface'
+    fields(indexof_ps)%npz = 1
   endif
-  fields(indexof_ps)%array(:,:,1) = geom%ptop + sum(delp,3)
-  fields(indexof_ps)%long_name = 'air_pressure_at_surface'
-  fields(indexof_ps)%npz = 1
-endif
 
 contains
 
