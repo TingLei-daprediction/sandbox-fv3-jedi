@@ -105,12 +105,10 @@ type :: fv3jedi_geom
   integer, allocatable :: NumColsPerRank(:), NumRowsPerRank(:)
   integer, allocatable :: MyRowGlobal(:), MyColGlobal(:)
   integer, allocatable :: MyRankInRowComm(:), MyRankInColComm(:)
-  integer :: colComm, rowComm, rowrank, colrank, k                                  !MPI Communicators and indexes used in the two-phase scatter
-  integer :: color,IOComm,IORank,IOCommSize                                         !MPI Communicator use in the one-level-per-rank read approach
+  integer :: colComm, rowComm, rowrank, colrank                                     !MPI Communicators and indexes used in the two-phase scatter
   integer :: globalsizes(2), localsizes(2)
   logical :: rowComm_created = .false.
   logical :: colComm_created = .false.
-  logical :: IOComm_created  = .false.
 
   contains
     procedure, public :: create
@@ -213,7 +211,6 @@ self%f_comm = comm
 ! ----------------
 self%rowComm = MPI_COMM_NULL
 self%colComm = MPI_COMM_NULL
-self%IOComm  = MPI_COMM_NULL
 
 ! Initialize field_masks config
 ! -----------------------------
@@ -381,15 +378,6 @@ self%localsizes(2) = self%jend(myRowRank) - self%jbegin(myRowRank) + 1
 
 call MPI_Allgather(self%localsizes(2), 1, MPI_Integer, self%NumColsPerRank, 1, MPI_Integer, self%rowComm, ierr)
 call MPI_Allgather(self%localsizes(1), 1, MPI_Integer, self%NumRowsPerRank, 1, MPI_Integer, self%colComm, ierr)
-
-! Create a sub-communicator to handle reads
-self%color=0
-if (self%k>0) self%color=1
-
-call MPI_Comm_split(mpicomm, self%color, wrank, self%IOComm, ierr)
-if (ierr == MPI_SUCCESS) self%IOComm_created = .true.
-call MPI_Comm_rank(self%IOComm,self%IORank,ierr)
-call MPI_Comm_size(self%IOComm,self%IOCommSize,ierr)
 
 ! Horizontal dimensions of ensemble input files
 self%globalsizes(1) = self%npx-1
@@ -762,11 +750,6 @@ call MPI_Initialized(inited, ierr)
 call MPI_Finalized(finalized, ierr)
 
 if (inited .and. .not. finalized) then
-  if (self%IOComm_created .and. self%IOComm /= MPI_COMM_NULL) then
-    call MPI_Comm_free(self%IOComm, ierr)
-    self%IOComm = MPI_COMM_NULL
-    self%IOComm_created = .false.
-  endif
   if (self%rowComm_created .and. self%rowComm /= MPI_COMM_NULL) then
     call MPI_Comm_free(self%rowComm, ierr)
     self%rowComm = MPI_COMM_NULL
