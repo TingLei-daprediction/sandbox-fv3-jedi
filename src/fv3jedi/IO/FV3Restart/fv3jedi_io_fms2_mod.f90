@@ -699,7 +699,24 @@ endif
 if( (fields_changed) .or. &
     (geom%globalsizes(1) .ne. globalsizes(1)) .or. &
     (geom%globalsizes(2) .ne. globalsizes(2)) ) then
+
   tb1 = MPI_Wtime()
+
+  ! Update cached fields
+  cached_nfields = size(fields)
+  if (allocated(cached_field_names)) deallocate(cached_field_names)
+  if (allocated(cached_field_nz))    deallocate(cached_field_nz)
+  allocate(cached_field_names(cached_nfields))
+  allocate(cached_field_nz(cached_nfields))
+  do f = 1, cached_nfields
+    cached_field_names(f) = fields(f)%long_name
+    if (allocated(fields(f)%array)) then
+      cached_field_nz(f) = size(fields(f)%array, 3)
+    else
+      cached_field_nz(f) = -1
+    endif
+  enddo
+
   globalsizes = geom%globalsizes
   need_to_reallocate_ps = .false.
   if(.not. first_pass) then
@@ -925,21 +942,6 @@ if( (fields_changed) .or. &
        write(6,'(a,i5)')'***ERROR*** after mpi_comm_create with iret = ',ierr
        call mpi_abort(mpi_comm_world,101,ierr)
   endif
-
-  ! Update cached fields after successful rebuild
-  cached_nfields = size(fields)
-  if (allocated(cached_field_names)) deallocate(cached_field_names)
-  if (allocated(cached_field_nz))    deallocate(cached_field_nz)
-  allocate(cached_field_names(cached_nfields))
-  allocate(cached_field_nz(cached_nfields))
-  do f = 1, cached_nfields
-    cached_field_names(f) = fields(f)%long_name
-    if (allocated(fields(f)%array)) then
-      cached_field_nz(f) = size(fields(f)%array, 3)
-    else
-      cached_field_nz(f) = -1
-    endif
-  enddo
 
   first_pass = .false.
 
