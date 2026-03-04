@@ -1290,7 +1290,7 @@ ecbuild_add_test( TARGET   fv3jedi_test_tier1_errorcovariance_bump
                   COMMAND  test_fv3jedi_errorcovariance.x )
 
 #if( ${gsibec_FOUND} )
-#  if( ${sp_FOUND} )
+#  if( ${ip_FOUND} )
 #  ecbuild_add_test( TARGET   fv3jedi_test_tier1_errorcovariance_gfs_gsi_global
 #                    MPI      6
 #                    ARGS     testinput/errorcovariance_gfs_gsi_global.yaml
@@ -1351,7 +1351,7 @@ ecbuild_add_test( TARGET   fv3jedi_test_tier2_hyb-4denvar_geos_sondes
                   MPI      6
                   ARGS     testinput/hyb-4denvar_geos_sondes_c12.yaml
                   COMMAND  fv3jedi_var.x )
-if( ${sp_FOUND} )
+if( ${ip_FOUND} )
   ecbuild_add_test( TARGET   fv3jedi_test_tier2_hyb-4denvar_llens_geos
                     MPI      6
                     ARGS     testinput/hyb-4denvar_llens_geos.yaml
@@ -1359,17 +1359,15 @@ if( ${sp_FOUND} )
 endif()
 endif()
 
-if( ${sp_FOUND} )
+if( ${ip_FOUND} )
   ecbuild_add_test( TARGET   fv3jedi_test_tier1_dirac_gfs_gsi_global
                     MPI      6
                     ARGS     testinput/dirac_gfs_gsi_global.yaml
-                    LABELS   CI_exclude_fv3jedi
                     COMMAND  fv3jedi_error_covariance_toolbox.x )
 
   ecbuild_add_test( TARGET   fv3jedi_test_tier1_3dvar_gfs_sondes
                     MPI      6
                     ARGS     testinput/3dvar_gfs_sondes_c12.yaml
-                    LABELS   CI_exclude_fv3jedi
                     COMMAND  fv3jedi_var.x )
 endif()
 
@@ -1509,13 +1507,14 @@ ecbuild_add_test( TARGET   fv3jedi_test_tier1_4dvar_hybrid_linear_model
 ecbuild_add_test( TARGET fv3jedi_test_tier1_3dfgat_cda
                   MPI      6
                   ARGS     testinput/3dfgat_cda.yaml
-                  COMMAND  fv3jedi_var.x )
+                  COMMAND  fv3jedi_var.x 
+	          TEST_DEPENDS fv3jedi_bumpparameters_nicas_gfs_nicas_local)
 
 ecbuild_add_test( TARGET   fv3jedi_test_tier1_4dvar_cda
                   MPI      6
                   ARGS     testinput/4dvar_cda.yaml
                   COMMAND  fv3jedi_var.x
-                  TEST_DEPENDS fv3jedi_test_tier1_gen_hybrid_linear_model_coeffs )
+                  TEST_DEPENDS fv3jedi_bumpparameters_nicas_gfs_nicas_local )
 
 # FSOI
 # ----
