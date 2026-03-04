@@ -762,16 +762,16 @@ if (inited .and. .not. finalized) then
   endif
 endif
 
-if (allocated(self%ibegin)) deallocate(self%ibegin)
-if (allocated(self%iend))   deallocate(self%iend)
-if (allocated(self%jbegin)) deallocate(self%jbegin)
-if (allocated(self%jend))   deallocate(self%jend)
-if (allocated(self%MyRankInRowComm)) deallocate(self%MyRankInRowComm)
-if (allocated(self%MyRankInColComm)) deallocate(self%MyRankInColComm)
-if (allocated(self%NumColsPerRank)) deallocate(self%NumColsPerRank)
-if (allocated(self%NumRowsPerRank)) deallocate(self%NumRowsPerRank)
-if (allocated(self%MyRowGlobal)) deallocate(self%MyRowGlobal)
-if (allocated(self%MyColGlobal)) deallocate(self%MyColGlobal)
+deallocate(self%ibegin)
+deallocate(self%iend)
+deallocate(self%jbegin)
+deallocate(self%jend)
+deallocate(self%MyRankInRowComm)
+deallocate(self%MyRankInColComm)
+deallocate(self%NumColsPerRank)
+deallocate(self%NumRowsPerRank)
+deallocate(self%MyRowGlobal)
+deallocate(self%MyColGlobal)
 
 end subroutine delete
 
