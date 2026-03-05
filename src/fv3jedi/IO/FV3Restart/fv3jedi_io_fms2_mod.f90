@@ -1506,8 +1506,10 @@ do var = 1,size(fields)
   io_unscaling_factor = iounscale(fields(var)%long_name, field_io_scaling)
 enddo
 
-! Create files, add dimensions and variable metadata
-! --------------------------------------------------
+! Open output restart files:
+! - create mode: define dimensions/variables/attributes
+! - existing-file mode: open for update only (data writes happen below)
+! ---------------------------------------------------------------------
 do n = 1, numfiles
   if (rstflag(n)) then
     FileName=trim(self%datapath)//'/'//trim(self%filenames(n))
