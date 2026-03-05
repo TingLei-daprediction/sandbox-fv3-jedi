@@ -96,6 +96,11 @@ class IOFmsParameters : public IOParametersBase {
                                         "whether to ignore restart checksums",
                                         true, this};
 
+  // Write values into pre-existing restart files instead of recreating metadata
+  oops::Parameter<bool> write_into_existing_files{"write into existing files",
+                                                  "write into existing files",
+                                                  false, this};
+
   // Write only a subset of fields?
   oops::OptionalParameter<std::vector<std::string>> fields_to_write{"fields to write",
                                                                     "names of fields to write",
