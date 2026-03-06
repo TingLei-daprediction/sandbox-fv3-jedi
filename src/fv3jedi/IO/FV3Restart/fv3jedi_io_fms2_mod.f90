@@ -262,6 +262,9 @@ if ( self%is_restart ) then
    if (conf%has("write into existing files")) then
       call conf%get_or_die("write into existing files", self%write_into_existing_files)
    endif
+   if (self%write_into_existing_files .and. .not. self%regional_restart) then
+      call abor1_ftn('fv3jedi_io_fms: "write into existing files" currently applies only to regional restart writes')
+   endif
 else
    ! Filename
    ! --------

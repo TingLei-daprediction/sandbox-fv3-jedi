@@ -97,6 +97,7 @@ class IOFmsParameters : public IOParametersBase {
                                         true, this};
 
   // Write values into pre-existing restart files instead of recreating metadata
+  // (currently used only in the regional restart write path)
   oops::Parameter<bool> write_into_existing_files{"write into existing files",
                                                   "write into existing files",
                                                   false, this};
