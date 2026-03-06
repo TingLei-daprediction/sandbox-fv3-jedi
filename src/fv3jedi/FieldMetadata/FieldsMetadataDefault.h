@@ -107,6 +107,22 @@ namespace fv3jedi {
     md.space = "magnitude";
     addFieldMetadata(fieldsmetadata, nlev, md);
 
+    md.longName = "u_component_of_native_D_grid_wind";
+    md.units = "ms-1";
+    md.kind = "double";
+    md.tracer = "false";
+    md.levels = "full";
+    md.space = "magnitude";
+    addFieldMetadata(fieldsmetadata, nlev, md);
+
+    md.longName = "v_component_of_native_D_grid_wind";
+    md.units = "ms-1";
+    md.kind = "double";
+    md.tracer = "false";
+    md.levels = "full";
+    md.space = "magnitude";
+    addFieldMetadata(fieldsmetadata, nlev, md);
+
     md.longName = "air_temperature";
     md.units = "K";
     md.kind = "double";
@@ -1848,4 +1864,3 @@ namespace fv3jedi {
     addFieldMetadata(fieldsmetadata, nlev, md);
   }
 }  // namespace fv3jedi
-

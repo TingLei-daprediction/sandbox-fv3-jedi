@@ -52,7 +52,43 @@ type(fv3jedi_geom),   intent(in)    :: geom
 ! Locals
 integer :: f, i, j, k
 logical :: found_neg
-type(fv3jedi_field), pointer :: state
+logical :: have_inc_ua, have_inc_va, have_state_ud, have_state_vd
+logical :: convert_a_to_d
+type(fv3jedi_field), pointer :: state, state_ud, state_vd
+real(kind=kind_real), pointer :: inc_ua(:,:,:), inc_va(:,:,:)
+real(kind=kind_real), allocatable :: inc_ud(:,:,:), inc_vd(:,:,:)
+
+! Wind names
+character(len=*), parameter :: a_wind_u = 'eastward_wind'
+character(len=*), parameter :: a_wind_v = 'northward_wind'
+character(len=*), parameter :: d_wind_u = 'u_component_of_native_D_grid_wind'
+character(len=*), parameter :: d_wind_v = 'v_component_of_native_D_grid_wind'
+
+! Check available A/D wind fields
+have_inc_ua = hasfield(increment_fields, a_wind_u)
+have_inc_va = hasfield(increment_fields, a_wind_v)
+have_state_ud = self%has_field(d_wind_u)
+have_state_vd = self%has_field(d_wind_v)
+
+! Convert A-grid increments to D-grid increments whenever D-wind state fields are present
+convert_a_to_d = have_inc_ua .and. have_inc_va .and. have_state_ud .and. have_state_vd
+
+if (convert_a_to_d) then
+  call get_field(increment_fields, a_wind_u, inc_ua)
+  call get_field(increment_fields, a_wind_v, inc_va)
+  call self%get_field(d_wind_u, state_ud)
+  call self%get_field(d_wind_v, state_vd)
+
+  allocate(inc_ud(state_ud%isc:state_ud%iec, state_ud%jsc:state_ud%jec, 1:state_ud%npz))
+  allocate(inc_vd(state_vd%isc:state_vd%iec, state_vd%jsc:state_vd%jec, 1:state_vd%npz))
+  call a_to_d(geom, inc_ua, inc_va, inc_ud, inc_vd)
+
+  state_ud%array = state_ud%array + inc_ud
+  state_vd%array = state_vd%array + inc_vd
+
+  deallocate(inc_ud, inc_vd)
+  nullify(inc_ua, inc_va, state_ud, state_vd)
+endif
 
 ! Loop over the increment fields and add them to the state
 do f = 1, size(increment_fields)
