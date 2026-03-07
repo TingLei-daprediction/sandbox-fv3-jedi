@@ -24,12 +24,13 @@ use mpp_domains_mod,              only: east, north, center, domain2D
 use mpp_mod,                      only: mpp_pe, mpp_root_pe
 
 ! fv3jedi
-use fv3jedi_field_mod,            only: fv3jedi_field, hasfield, field_clen
+use fv3jedi_field_mod,            only: fv3jedi_field, hasfield, get_field, field_clen
 use fv3jedi_io_utils_mod,         only: vdate_to_datestring, replace_text, add_iteration, ioname, &
                                         ioscale, iounscale
 use fv3jedi_kinds_mod,            only: kind_real
 use fv3jedi_geom_mod,             only: fv3jedi_geom
 use fields_metadata_mod,          only: field_metadata
+use wind_vt_mod,                  only: a_to_d
 
 ! --------------------------------------------------------------------------------------------------
 
@@ -64,10 +65,12 @@ type fv3jedi_io_fms
  character(len=128) :: prefix
  integer :: calendar_type
  logical :: ignore_checksum
+ logical :: l_D_wind_restart_output = .false.
  character(len=:), allocatable :: fields_to_write(:) ! Optional list of fields to write out (non-restarts)
  ! Geometry copies
  type(domain2D), pointer :: domain
  integer :: npz
+ type(fv3jedi_geom), pointer :: geom
  contains
    procedure :: create
    procedure :: delete
@@ -82,12 +85,11 @@ contains
 
 ! --------------------------------------------------------------------------------------------------
 
-subroutine create(self, conf, domain, npz)
+subroutine create(self, conf, geom)
 
 class(fv3jedi_io_fms),     intent(inout) :: self
 type(fckit_configuration), intent(in)    :: conf
-type(domain2D), target,    intent(in)    :: domain
-integer,                   intent(in)    :: npz
+type(fv3jedi_geom), target, intent(in)   :: geom
 
 integer :: n
 character(len=:), allocatable :: str
@@ -99,6 +101,16 @@ if (conf%has("is restart")) then
   call conf%get_or_die("is restart", self%is_restart)
 else
   self%is_restart = .true.
+endif
+
+! Option to compute and output D-grid winds from A-grid winds during restart write.
+if (conf%has("l_D_wind_restart_output")) then
+   call conf%get_or_die("l_D_wind_restart_output", self%l_D_wind_restart_output)
+else
+   self%l_D_wind_restart_output = .false.
+endif
+if (self%l_D_wind_restart_output .and. .not. self%is_restart) then
+   call abor1_ftn('fv3jedi_io_fms_mod.create: l_D_wind_restart_output only applies to restart output')
 endif
 
 ! Get path to files
@@ -209,6 +221,7 @@ if ( self%is_restart ) then
    else
       self%ignore_checksum = .true.
    end if
+
 else
    ! Filename
    ! --------
@@ -238,8 +251,9 @@ end if
 
 ! Geometry copies
 ! ---------------
-self%domain => domain
-self%npz = npz
+self%domain => geom%domain
+self%npz = geom%npz
+self%geom => geom
 
 end subroutine create
 
@@ -250,6 +264,7 @@ subroutine delete(self)
 class(fv3jedi_io_fms), intent(inout) :: self
 
 if (associated(self%domain)) nullify(self%domain)
+if (associated(self%geom)) nullify(self%geom)
 
 end subroutine delete
 
@@ -581,6 +596,8 @@ type(FmsNetcdfDomainFile_t) :: fileobj(numfiles)
 character(len=64)  :: datefile
 character(len=8), allocatable :: dim_names(:)
 real(kind=kind_real) :: io_unscaling_factor
+real(kind=kind_real), pointer :: ua(:,:,:), va(:,:,:)
+real(kind=kind_real), allocatable :: ud(:,:,:), vd(:,:,:)
 
 
 ! Get datetime
@@ -642,6 +659,45 @@ do var = 1,size(fields)
                               fields(var)%array, &
                               center, trim(fields(var)%units), .true., field_io_names)
 enddo
+
+! Optionally add D-grid winds generated from A-grid winds for restart output
+if (self%l_D_wind_restart_output) then
+  if (.not. associated(self%geom)) then
+    call abor1_ftn('fv3jedi_io_fms_mod.write_restart_all: geometry pointer not associated')
+  endif
+
+  if (.not. hasfield(fields, 'eastward_wind') .or. .not. hasfield(fields, 'northward_wind')) then
+    call abor1_ftn('fv3jedi_io_fms_mod.write_restart_all: l_D_wind_restart_output requires eastward_wind and northward_wind')
+  endif
+
+  call get_field(fields, 'eastward_wind', ua)
+  call get_field(fields, 'northward_wind', va)
+
+  allocate(ud(self%geom%isc:self%geom%iec,   self%geom%jsc:self%geom%jec+1, self%geom%npz))
+  allocate(vd(self%geom%isc:self%geom%iec+1, self%geom%jsc:self%geom%jec,   self%geom%npz))
+  call a_to_d(self%geom, ua, va, ud, vd)
+
+  indexrst = self%index_core
+  if ( .not. rstflag(indexrst) ) then
+     if ( open_file(fileobj(indexrst), &
+          trim(self%datapath)//'/'//trim(self%filenames(indexrst)), &
+          'overwrite', self%domain, is_restart=.true., dont_add_res_to_filename=.true.) ) then
+        rstflag(indexrst) = .true.
+     else
+        call abor1_ftn('fv3jedi_io_fms_mod.write_restart_all: file ' &
+                        // trim(self%datapath)//'/'//trim(self%filename_nonrestart) // &
+                       ' could not be opened')
+     end if
+  end if
+
+  call fv3jedi_register_field(fileobj(indexrst), 'u_component_of_native_D_grid_wind', ud, north, &
+                              'ms-1', .true., field_io_names)
+  call fv3jedi_register_field(fileobj(indexrst), 'v_component_of_native_D_grid_wind', vd, east, &
+                              'ms-1', .true., field_io_names)
+
+  deallocate(ud, vd)
+  nullify(ua, va)
+endif
 
 ! Loop over files and write fields
 ! --------------------------------

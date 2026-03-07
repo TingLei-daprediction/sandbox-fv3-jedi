@@ -74,7 +74,7 @@ f_conf = fckit_configuration(c_conf)
 
 ! Call implementation
 ! -------------------
-call f_self%create(f_conf, f_geom%domain, f_geom%npz)
+call f_self%create(f_conf, f_geom)
 
 end subroutine c_fv3jedi_io_fms_create
 
