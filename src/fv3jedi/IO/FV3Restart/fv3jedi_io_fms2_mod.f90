@@ -1621,10 +1621,21 @@ do n = 1, numfiles
       var2 = FileType(n)%VariableIndecies(var)
 
       if (self%write_into_existing_files) then
-        call check( nf90_inq_varid(ncid(n), trim(ioname(trim(fields(var2)%long_name), field_io_names)), varid) )
+        print *, 'write_existing debug rank=', rank, ' file_index=', n, ' var_index=', var2, &
+                 ' file=', trim(FileType(n)%FileName), ' long_name=', trim(fields(var2)%long_name), &
+                 ' model_name=', trim(fields(var2)%model_name), &
+                 ' io_name=', trim(ioname(trim(fields(var2)%long_name), field_io_names))
+        rc = nf90_inq_varid(ncid(n), trim(ioname(trim(fields(var2)%long_name), field_io_names)), varid)
       else
-        call check( nf90_inq_varid(ncid(n), trim(fields(var2)%model_name), varid) )
+        rc = nf90_inq_varid(ncid(n), trim(fields(var2)%model_name), varid)
       endif
+      if (rc /= nf90_noerr) then
+        print *, 'write_restart_all_reg inq_varid failed rank=', rank, &
+                 ' file=', trim(FileType(n)%FileName), ' long_name=', trim(fields(var2)%long_name), &
+                 ' model_name=', trim(fields(var2)%model_name), &
+                 ' io_name=', trim(ioname(trim(fields(var2)%long_name), field_io_names))
+      endif
+      call check(rc)
       call check( nf90_var_par_access(ncid(n), varid, nf90_collective) )
 
       start = (/ geom%isc,  geom%jsc,  1 /)
