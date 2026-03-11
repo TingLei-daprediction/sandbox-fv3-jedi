@@ -1620,7 +1620,11 @@ do n = 1, numfiles
     do var = 1, num_restart_vars(n)
       var2 = FileType(n)%VariableIndecies(var)
 
-      call check( nf90_inq_varid(ncid(n), trim(fields(var2)%model_name), varid) )
+      if (self%write_into_existing_files) then
+        call check( nf90_inq_varid(ncid(n), trim(ioname(trim(fields(var2)%long_name), field_io_names)), varid) )
+      else
+        call check( nf90_inq_varid(ncid(n), trim(fields(var2)%model_name), varid) )
+      endif
       call check( nf90_var_par_access(ncid(n), varid, nf90_collective) )
 
       start = (/ geom%isc,  geom%jsc,  1 /)
