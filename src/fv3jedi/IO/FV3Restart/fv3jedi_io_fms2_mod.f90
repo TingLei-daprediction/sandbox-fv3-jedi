@@ -1496,6 +1496,11 @@ num_restart_vars(:)=0
 ! Loop over fields to figure out where all the variables go
 ! ---------------------------------------------------------
 do var = 1,size(fields)
+  ! Regional write-in-place restarts typically do not carry ps in sfc_data.
+  if (self%regional_restart .and. self%write_into_existing_files) then
+    if (trim(fields(var)%long_name) == 'air_pressure_at_surface') cycle
+  endif
+
   ! Get file to use
   call get_io_file(self, fields(var), indexrst)
 
