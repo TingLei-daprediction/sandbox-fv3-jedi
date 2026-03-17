@@ -19,11 +19,10 @@ use fckit_configuration_module, only: fckit_configuration
 use fckit_log_module, only : log
 
 ! fv3jedi uses
-use fv3jedi_field_mod,           only: fv3jedi_field, hasfield, get_field
+use fv3jedi_field_mod,           only: fv3jedi_field
 use fv3jedi_fields_mod,          only: fv3jedi_fields
 use fv3jedi_geom_mod,            only: fv3jedi_geom
 use fv3jedi_kinds_mod,           only: kind_real
-use wind_vt_mod,                 only: a_to_d
 
 implicit none
 private

@@ -101,6 +101,10 @@ class IOFmsParameters : public IOParametersBase {
   oops::Parameter<bool> write_into_existing_files{"write into existing files",
                                                   "write into existing files",
                                                   false, this};
+  // For restart output only, optionally write native D-grid winds computed from A-grid winds.
+  oops::Parameter<bool> l_D_wind_restart_output{"l_D_wind_restart_output",
+                                                 "write D-grid winds at restart output",
+                                                 false, this};
 
   // Write only a subset of fields?
   oops::OptionalParameter<std::vector<std::string>> fields_to_write{"fields to write",
