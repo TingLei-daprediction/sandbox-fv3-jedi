@@ -1368,8 +1368,6 @@ type(FmsNetcdfDomainFile_t) :: fileobj(numfiles)
 character(len=64)  :: datefile
 character(len=8), allocatable :: dim_names(:)
 real(kind=kind_real) :: io_unscaling_factor
-real(kind=kind_real), pointer :: ua(:,:,:), va(:,:,:)
-real(kind=kind_real), allocatable :: ud(:,:,:), vd(:,:,:)
 
 
 ! Get datetime
@@ -1431,45 +1429,6 @@ do var = 1,size(fields)
                               fields(var)%array, &
                               center, trim(fields(var)%units), .true., field_io_names)
 enddo
-
-! Optionally add D-grid winds generated from A-grid winds for restart output
-if (self%l_D_wind_restart_output) then
-  if (.not. associated(self%geom)) then
-    call abor1_ftn('fv3jedi_io_fms_mod.write_restart_all: geometry pointer not associated')
-  endif
-
-  if (.not. hasfield(fields, 'eastward_wind') .or. .not. hasfield(fields, 'northward_wind')) then
-    call abor1_ftn('fv3jedi_io_fms_mod.write_restart_all: l_D_wind_restart_output requires eastward_wind and northward_wind')
-  endif
-
-  call get_field(fields, 'eastward_wind', ua)
-  call get_field(fields, 'northward_wind', va)
-
-  allocate(ud(self%geom%isc:self%geom%iec,   self%geom%jsc:self%geom%jec+1, self%geom%npz))
-  allocate(vd(self%geom%isc:self%geom%iec+1, self%geom%jsc:self%geom%jec,   self%geom%npz))
-  call a_to_d(self%geom, ua, va, ud, vd)
-
-  indexrst = self%index_core
-  if ( .not. rstflag(indexrst) ) then
-     if ( open_file(fileobj(indexrst), &
-          trim(self%datapath)//'/'//trim(self%filenames(indexrst)), &
-          'overwrite', self%domain, is_restart=.true., dont_add_res_to_filename=.true.) ) then
-        rstflag(indexrst) = .true.
-     else
-        call abor1_ftn('fv3jedi_io_fms_mod.write_restart_all: file ' &
-                        // trim(self%datapath)//'/'//trim(self%filename_nonrestart) // &
-                       ' could not be opened')
-     end if
-  end if
-
-  call fv3jedi_register_field(fileobj(indexrst), 'u_component_of_native_D_grid_wind', ud, north, &
-                              'ms-1', .true., field_io_names)
-  call fv3jedi_register_field(fileobj(indexrst), 'v_component_of_native_D_grid_wind', vd, east, &
-                              'ms-1', .true., field_io_names)
-
-  deallocate(ud, vd)
-  nullify(ua, va)
-endif
 
 ! Loop over files and write fields
 ! --------------------------------
