@@ -33,7 +33,7 @@ use fields_metadata_mod,          only: field_metadata
 use mpi, only : MPI_Wtime, MPI_comm_world, MPI_Barrier, MPI_Integer, MPI_DOUBLE_PRECISION, MPI_MAX, &
                 MPI_INFO_NULL, mpi_character, MPI_COMM_NULL, MPI_UNDEFINED, MPI_IN_PLACE, MPI_INTEGER8, MPI_SUM
 use netcdf
-use wind_vt_mod,                  only: a_to_d
+use wind_vt_mod,                  only: a_to_d, d_to_a_inverse
 
 ! --------------------------------------------------------------------------------------------------
 
@@ -107,6 +107,7 @@ type fv3jedi_io_fms
  logical :: ignore_checksum
  logical :: write_into_existing_files
  logical :: l_D_wind_restart_output = .false.
+ logical :: use_d_to_a_inverse_for_D_wind_restart_output = .false.
  character(len=:), allocatable :: fields_to_write(:) ! Optional list of fields to write out (non-restarts)
  ! Geometry copies
  type(domain2D), pointer :: domain
@@ -154,8 +155,17 @@ if (conf%has("l_D_wind_restart_output")) then
 else
    self%l_D_wind_restart_output = .false.
 endif
+if (conf%has("use_d_to_a_inverse_for_D_wind_restart_output")) then
+   call conf%get_or_die("use_d_to_a_inverse_for_D_wind_restart_output", &
+                        self%use_d_to_a_inverse_for_D_wind_restart_output)
+else
+   self%use_d_to_a_inverse_for_D_wind_restart_output = .false.
+endif
 if (self%l_D_wind_restart_output .and. .not. self%is_restart) then
    call abor1_ftn('fv3jedi_io_fms_mod.create: l_D_wind_restart_output only applies to restart output')
+endif
+if (self%use_d_to_a_inverse_for_D_wind_restart_output .and. .not. self%l_D_wind_restart_output) then
+   call abor1_ftn('fv3jedi_io_fms_mod.create: use_d_to_a_inverse_for_D_wind_restart_output requires l_D_wind_restart_output')
 endif
 
 ! Get path to files
@@ -275,6 +285,9 @@ if ( self%is_restart ) then
    endif
    if (self%write_into_existing_files .and. .not. self%regional_restart) then
       call abor1_ftn('fv3jedi_io_fms: "write into existing files" currently applies only to regional restart writes')
+   endif
+   if (self%l_D_wind_restart_output .and. .not. self%write_into_existing_files) then
+      call abor1_ftn('fv3jedi_io_fms: l_D_wind_restart_output currently applies only to "write into existing files" restart writes')
    endif
 else
    ! Filename
@@ -1352,8 +1365,6 @@ type(FmsNetcdfDomainFile_t) :: fileobj(numfiles)
 character(len=64)  :: datefile
 character(len=8), allocatable :: dim_names(:)
 real(kind=kind_real) :: io_unscaling_factor
-real(kind=kind_real), pointer :: ua(:,:,:), va(:,:,:)
-real(kind=kind_real), allocatable :: ud(:,:,:), vd(:,:,:)
 
 
 ! Get datetime
@@ -1416,45 +1427,6 @@ do var = 1,size(fields)
                               center, trim(fields(var)%units), .true., field_io_names)
 enddo
 
-! Optionally add D-grid winds generated from A-grid winds for restart output
-if (self%l_D_wind_restart_output) then
-  if (.not. associated(self%geom)) then
-    call abor1_ftn('fv3jedi_io_fms_mod.write_restart_all: geometry pointer not associated')
-  endif
-
-  if (.not. hasfield(fields, 'eastward_wind') .or. .not. hasfield(fields, 'northward_wind')) then
-    call abor1_ftn('fv3jedi_io_fms_mod.write_restart_all: l_D_wind_restart_output requires eastward_wind and northward_wind')
-  endif
-
-  call get_field(fields, 'eastward_wind', ua)
-  call get_field(fields, 'northward_wind', va)
-
-  allocate(ud(self%geom%isc:self%geom%iec,   self%geom%jsc:self%geom%jec+1, self%geom%npz))
-  allocate(vd(self%geom%isc:self%geom%iec+1, self%geom%jsc:self%geom%jec,   self%geom%npz))
-  call a_to_d(self%geom, ua, va, ud, vd)
-
-  indexrst = self%index_core
-  if ( .not. rstflag(indexrst) ) then
-     if ( open_file(fileobj(indexrst), &
-          trim(self%datapath)//'/'//trim(self%filenames(indexrst)), &
-          'overwrite', self%domain, is_restart=.true., dont_add_res_to_filename=.true.) ) then
-        rstflag(indexrst) = .true.
-     else
-        call abor1_ftn('fv3jedi_io_fms_mod.write_restart_all: file ' &
-                        // trim(self%datapath)//'/'//trim(self%filename_nonrestart) // &
-                       ' could not be opened')
-     end if
-  end if
-
-  call fv3jedi_register_field(fileobj(indexrst), 'u_component_of_native_D_grid_wind', ud, north, &
-                              'ms-1', .true., field_io_names)
-  call fv3jedi_register_field(fileobj(indexrst), 'v_component_of_native_D_grid_wind', vd, east, &
-                              'ms-1', .true., field_io_names)
-
-  deallocate(ud, vd)
-  nullify(ua, va)
-endif
-
 ! Loop over files and write fields
 ! --------------------------------
 do n = 1, numfiles
@@ -1498,11 +1470,13 @@ integer :: idate, isecs
 type(FmsNetcdfDomainFile_t) :: fileobj(numfiles)
 class(*), pointer :: globalptr(:,:) => null()
 integer :: start(3), counts(3)
+integer :: start_u(3), counts_u(3), start_v(3), counts_v(3)
 character(len=64)  :: datefile
 character(len=8), allocatable :: dim_names(:)
 real(kind=kind_real) :: io_unscaling_factor
 real(kind=8) :: tb1,tb2
 real(kind=8) :: te1,te2
+real(kind=8) :: timer_start, timer_end
 character(len=256) :: tmppath
 character(len=NF90_MAX_NAME) :: FileName
 integer :: dimids(4), oldMode
@@ -1510,6 +1484,12 @@ integer, dimension(:), allocatable :: chunksizes
 character(len=32) :: chksum
 integer(kind=8) :: chksum_i8
 integer(kind=8) :: mold(1)
+character(len=:), allocatable :: ua_name, va_name
+real(kind=kind_real), pointer :: ua_ana(:,:,:), va_ana(:,:,:)
+real(kind=kind_real), allocatable :: ua_bkg(:,:,:), va_bkg(:,:,:), dua(:,:,:), dva(:,:,:)
+real(kind=kind_real), allocatable :: ud_bkg(:,:,:), vd_bkg(:,:,:), dud(:,:,:), dvd(:,:,:)
+real(kind=kind_real), allocatable :: ud_out(:,:,:), vd_out(:,:,:)
+integer :: varid_ua, varid_va, varid_u, varid_v
 
 rank=mpp_pe()
 npes=mpp_npes()
@@ -1672,6 +1652,66 @@ do n = 1, numfiles
   endif
 enddo
 
+if (self%write_into_existing_files .and. self%l_D_wind_restart_output) then
+  if (.not. hasfield(fields, 'eastward_wind') .or. .not. hasfield(fields, 'northward_wind')) then
+    call abor1_ftn('fv3jedi_io_fms_mod.write_restart_all_reg: l_D_wind_restart_output requires eastward_wind and northward_wind')
+  endif
+  if (ncid(self%index_core) < 0) then
+    call abor1_ftn('fv3jedi_io_fms_mod.write_restart_all_reg: fv_core file is not open for D-wind restart output')
+  endif
+
+  ua_name = ioname('eastward_wind', field_io_names)
+  va_name = ioname('northward_wind', field_io_names)
+
+  call get_field(fields, 'eastward_wind', ua_ana)
+  call get_field(fields, 'northward_wind', va_ana)
+
+  allocate(ua_bkg(geom%isc:geom%iec, geom%jsc:geom%jec, geom%npz))
+  allocate(va_bkg(geom%isc:geom%iec, geom%jsc:geom%jec, geom%npz))
+  allocate(dua(geom%isc:geom%iec, geom%jsc:geom%jec, geom%npz))
+  allocate(dva(geom%isc:geom%iec, geom%jsc:geom%jec, geom%npz))
+  allocate(ud_bkg(geom%isc:geom%iec,   geom%jsc:geom%jec+1, geom%npz))
+  allocate(vd_bkg(geom%isc:geom%iec+1, geom%jsc:geom%jec,   geom%npz))
+  allocate(dud(geom%isc:geom%iec,      geom%jsc:geom%jec+1, geom%npz))
+  allocate(dvd(geom%isc:geom%iec+1,    geom%jsc:geom%jec,   geom%npz))
+  allocate(ud_out(geom%isc:geom%iec,   geom%jsc:geom%jec+1, geom%npz))
+  allocate(vd_out(geom%isc:geom%iec+1, geom%jsc:geom%jec,   geom%npz))
+
+  start = (/ geom%isc, geom%jsc, 1 /)
+  counts = (/ size(ua_bkg, 1), size(ua_bkg, 2), size(ua_bkg, 3) /)
+  start_u = (/ geom%isc, geom%jsc, 1 /)
+  counts_u = (/ size(ud_bkg, 1), size(ud_bkg, 2), size(ud_bkg, 3) /)
+  start_v = (/ geom%isc, geom%jsc, 1 /)
+  counts_v = (/ size(vd_bkg, 1), size(vd_bkg, 2), size(vd_bkg, 3) /)
+
+  call check(nf90_inq_varid(ncid(self%index_core), trim(ua_name), varid_ua))
+  call check(nf90_inq_varid(ncid(self%index_core), trim(va_name), varid_va))
+  call check(nf90_inq_varid(ncid(self%index_core), 'u', varid_u))
+  call check(nf90_inq_varid(ncid(self%index_core), 'v', varid_v))
+  call check(nf90_get_var(ncid(self%index_core), varid_ua, ua_bkg, start=start, count=counts))
+  call check(nf90_get_var(ncid(self%index_core), varid_va, va_bkg, start=start, count=counts))
+  call check(nf90_get_var(ncid(self%index_core), varid_u, ud_bkg, start=start_u, count=counts_u))
+  call check(nf90_get_var(ncid(self%index_core), varid_v, vd_bkg, start=start_v, count=counts_v))
+
+  dua = ua_ana - ua_bkg
+  dva = va_ana - va_bkg
+
+  if (self%use_d_to_a_inverse_for_D_wind_restart_output) then
+    timer_start = MPI_Wtime()
+    call d_to_a_inverse(geom, dua, dva, dud, dvd)
+    timer_end = MPI_Wtime()
+    if (rank == 0) then
+      write(*,'(A,F10.3,A)') 'fv3jedi_io_fms_mod.write_restart_all_reg: d_to_a_inverse time = ', &
+                             timer_end - timer_start, ' s'
+    endif
+  else
+    call a_to_d(geom, dua, dva, dud, dvd)
+  endif
+
+  ud_out = ud_bkg + dud
+  vd_out = vd_bkg + dvd
+endif
+
 ! Loop over files and write fields
 ! --------------------------------
 do n = 1, numfiles
@@ -1702,6 +1742,15 @@ do n = 1, numfiles
       call check( nf90_put_var(ncid(n), varid, fields(var2)%array, start=start, count=counts) )
 
     enddo ! var loop
+
+    if (self%write_into_existing_files .and. self%l_D_wind_restart_output .and. n == self%index_core) then
+      call check( nf90_inq_varid(ncid(n), 'u', varid_u) )
+      call check( nf90_inq_varid(ncid(n), 'v', varid_v) )
+      call check( nf90_var_par_access(ncid(n), varid_u, nf90_collective) )
+      call check( nf90_var_par_access(ncid(n), varid_v, nf90_collective) )
+      call check( nf90_put_var(ncid(n), varid_u, ud_out, start=start_u, count=counts_u) )
+      call check( nf90_put_var(ncid(n), varid_v, vd_out, start=start_v, count=counts_v) )
+    endif
   endif
 enddo
 
@@ -1712,6 +1761,20 @@ do n = 1, numfiles
     call check( nf90_close(ncid(n)) )
   endif
 enddo
+
+if (allocated(ua_bkg)) deallocate(ua_bkg)
+if (allocated(va_bkg)) deallocate(va_bkg)
+if (allocated(dua)) deallocate(dua)
+if (allocated(dva)) deallocate(dva)
+if (allocated(ud_bkg)) deallocate(ud_bkg)
+if (allocated(vd_bkg)) deallocate(vd_bkg)
+if (allocated(dud)) deallocate(dud)
+if (allocated(dvd)) deallocate(dvd)
+if (allocated(ud_out)) deallocate(ud_out)
+if (allocated(vd_out)) deallocate(vd_out)
+if (allocated(ua_name)) deallocate(ua_name)
+if (allocated(va_name)) deallocate(va_name)
+nullify(ua_ana, va_ana)
 
 !Write date/time info in coupler.res
 !-----------------------------------
@@ -2054,3 +2117,4 @@ end subroutine dummy_final
   end subroutine check
 
 end module fv3jedi_io_fms_mod
+
