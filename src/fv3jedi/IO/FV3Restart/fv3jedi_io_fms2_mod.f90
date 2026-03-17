@@ -104,6 +104,7 @@ type fv3jedi_io_fms
  character(len=128) :: prefix
  integer :: calendar_type
  logical :: ignore_checksum
+ logical :: write_into_existing_files
  character(len=:), allocatable :: fields_to_write(:) ! Optional list of fields to write out (non-restarts)
  ! Geometry copies
  type(domain2D), pointer :: domain
@@ -254,6 +255,16 @@ if ( self%is_restart ) then
    else
       self%ignore_checksum = .true.
    end if
+
+   ! Option to write values into already existing restart files
+   ! ----------------------------------------------------------
+   self%write_into_existing_files = .false.
+   if (conf%has("write into existing files")) then
+      call conf%get_or_die("write into existing files", self%write_into_existing_files)
+   endif
+   if (self%write_into_existing_files .and. .not. self%regional_restart) then
+      call abor1_ftn('fv3jedi_io_fms: "write into existing files" currently applies only to regional restart writes')
+   endif
 else
    ! Filename
    ! --------
@@ -1485,6 +1496,11 @@ num_restart_vars(:)=0
 ! Loop over fields to figure out where all the variables go
 ! ---------------------------------------------------------
 do var = 1,size(fields)
+  ! Regional write-in-place restarts typically do not carry ps in sfc_data.
+  if (self%regional_restart .and. self%write_into_existing_files) then
+    if (trim(fields(var)%long_name) == 'air_pressure_at_surface') cycle
+  endif
+
   ! Get file to use
   call get_io_file(self, fields(var), indexrst)
 
@@ -1498,94 +1514,106 @@ do var = 1,size(fields)
   io_unscaling_factor = iounscale(fields(var)%long_name, field_io_scaling)
 enddo
 
-! Create files, add dimensions and variable metadata
-! --------------------------------------------------
+! Open output restart files:
+! - create mode: define dimensions/variables/attributes
+! - existing-file mode: open for update only (data writes happen below)
+! ---------------------------------------------------------------------
 do n = 1, numfiles
   if (rstflag(n)) then
     FileName=trim(self%datapath)//'/'//trim(self%filenames(n))
-    rc = nf90_create(trim(FileName), ior(ior(NF90_CLOBBER,NF90_NETCDF4),NF90_MPIIO), ncid(n), comm=MPI_COMM_WORLD, info=MPI_INFO_NULL)
-    if(rc == nf90_noerr) then
-      dimids(:)=-999
-      call check ( nf90_set_fill(ncid(n), NF90_FILL, oldMode) )
+    if (self%write_into_existing_files) then
+      rc = nf90_open(trim(FileName), ior(nf90_write,nf90_mpiio), ncid(n), comm=MPI_COMM_WORLD, info=MPI_INFO_NULL)
+      if(rc == nf90_noerr) then
+        FileType(n)%FileName = FileName
+      else
+        call abor1_ftn('fv3jedi_io_fms_mod.write_restart_all_reg: file ' &
+                        // trim(FileName) // ' could not be opened for update')
+      endif
+    else
+      rc = nf90_create(trim(FileName), ior(ior(NF90_CLOBBER,NF90_NETCDF4),NF90_MPIIO), ncid(n), comm=MPI_COMM_WORLD, info=MPI_INFO_NULL)
+      if(rc == nf90_noerr) then
+        dimids(:)=-999
+        call check ( nf90_set_fill(ncid(n), NF90_FILL, oldMode) )
 
-      call check( nf90_def_dim(ncid(n), 'xaxis_1', geom%globalsizes(1), dimids(1)) )
-      call check( nf90_def_dim(ncid(n), 'yaxis_1', geom%globalsizes(2), dimids(2)) )
-      call check( nf90_def_var(ncid(n), 'xaxis_1', NF90_DOUBLE, dimids(1), varid) )
-      call check( nf90_put_att(ncid(n), varid, "cartesian_axis", "X") )
-      call check( nf90_put_att(ncid(n), varid, "long_name", "xaxis_1") )
-      call check( nf90_put_att(ncid(n), varid, "units", "none") )
+        call check( nf90_def_dim(ncid(n), 'xaxis_1', geom%globalsizes(1), dimids(1)) )
+        call check( nf90_def_dim(ncid(n), 'yaxis_1', geom%globalsizes(2), dimids(2)) )
+        call check( nf90_def_var(ncid(n), 'xaxis_1', NF90_DOUBLE, dimids(1), varid) )
+        call check( nf90_put_att(ncid(n), varid, "cartesian_axis", "X") )
+        call check( nf90_put_att(ncid(n), varid, "long_name", "xaxis_1") )
+        call check( nf90_put_att(ncid(n), varid, "units", "none") )
 
-      call check( nf90_def_var(ncid(n), 'yaxis_1', NF90_DOUBLE, dimids(2), varid) )
-      call check( nf90_put_att(ncid(n), varid, "cartesian_axis", "Y") )
-      call check( nf90_put_att(ncid(n), varid, "long_name", "yaxis_1") )
-      call check( nf90_put_att(ncid(n), varid, "units", "none") )
+        call check( nf90_def_var(ncid(n), 'yaxis_1', NF90_DOUBLE, dimids(2), varid) )
+        call check( nf90_put_att(ncid(n), varid, "cartesian_axis", "Y") )
+        call check( nf90_put_att(ncid(n), varid, "long_name", "yaxis_1") )
+        call check( nf90_put_att(ncid(n), varid, "units", "none") )
 
-      ! Create a zaxis_1 dimension if any of the variables assigned to this file have a third dimension greater than 1
-      ! This is true for fv_core.res, fv_srf_wnd.res and sfc_data
-      sz=1
+        ! Create a zaxis_1 dimension if any of the variables assigned to this file have a third dimension greater than 1
+        ! This is true for fv_core.res, fv_srf_wnd.res and sfc_data
+        sz=1
+        do var = 1, num_restart_vars(n)
+          var2 = FileType(n)%VariableIndecies(var)
+          sz=max(sz,size(fields(var2)%array,3))
+        enddo
+        if( sz > 1 ) then
+          call check( nf90_def_dim(ncid(n), 'zaxis_1', sz, dimids(3)) )
+          call check( nf90_def_dim(ncid(n), 'Time', NF90_UNLIMITED, dimids(4)) )
+          call check( nf90_def_var(ncid(n), 'zaxis_1', NF90_DOUBLE, dimids(3), varid) )
+          call check( nf90_put_att(ncid(n), varid, "long_name", "zaxis_1") )
+          call check( nf90_put_att(ncid(n), varid, "units", "none") )
+          call check( nf90_def_var(ncid(n), 'Time', NF90_DOUBLE, dimids(4), varid) )
+          call check( nf90_put_att(ncid(n), varid, "long_name", "Time") )
+          call check( nf90_put_att(ncid(n), varid, "units", "time level") )
+        else
+          call check( nf90_def_dim(ncid(n), 'Time', NF90_UNLIMITED, dimids(4)) )
+          call check( nf90_def_var(ncid(n), 'Time', NF90_DOUBLE, dimids(4), varid) )
+          call check( nf90_put_att(ncid(n), varid, "long_name", "Time") )
+          call check( nf90_put_att(ncid(n), varid, "units", "time level") )
+        endif
+
+        FileType(n)%FileName = FileName
+      else
+        call abor1_ftn('fv3jedi_io_fms_mod.write_restart_all: file ' &
+                        // trim(FileName) // ' could not be created')
+      end if
+
+      call check ( nf90_set_fill(ncid(n), NF90_NOFILL, oldMode) )
+
       do var = 1, num_restart_vars(n)
         var2 = FileType(n)%VariableIndecies(var)
-        sz=max(sz,size(fields(var2)%array,3))
-      enddo
-      if( sz > 1 ) then
-        call check( nf90_def_dim(ncid(n), 'zaxis_1', sz, dimids(3)) )
-        call check( nf90_def_dim(ncid(n), 'Time', NF90_UNLIMITED, dimids(4)) )
-        call check( nf90_def_var(ncid(n), 'zaxis_1', NF90_DOUBLE, dimids(3), varid) )
-        call check( nf90_put_att(ncid(n), varid, "long_name", "zaxis_1") )
-        call check( nf90_put_att(ncid(n), varid, "units", "none") )
-        call check( nf90_def_var(ncid(n), 'Time', NF90_DOUBLE, dimids(4), varid) )
-        call check( nf90_put_att(ncid(n), varid, "long_name", "Time") )
-        call check( nf90_put_att(ncid(n), varid, "units", "time level") )
-      else
-        call check( nf90_def_dim(ncid(n), 'Time', NF90_UNLIMITED, dimids(4)) )
-        call check( nf90_def_var(ncid(n), 'Time', NF90_DOUBLE, dimids(4), varid) )
-        call check( nf90_put_att(ncid(n), varid, "long_name", "Time") )
-        call check( nf90_put_att(ncid(n), varid, "units", "time level") )
-      endif
+        if(size(fields(var2)%array,3) > 1) then
+          chunksizes = [geom%globalsizes(1), geom%globalsizes(2), 1, 1]
+          call check( nf90_def_var(ncid(n), trim(fields(var2)%model_name), NF90_DOUBLE, dimids, varid, chunksizes=chunksizes) )
+          call check( nf90_put_att(ncid(n), varid, "long_name", trim(fields(var2)%long_name)) )
+          call check( nf90_put_att(ncid(n), varid, "units", trim(fields(var2)%units)) )
 
-      FileType(n)%FileName = FileName
-    else
-      call abor1_ftn('fv3jedi_io_fms_mod.write_restart_all: file ' &
-                      // trim(FileName) // ' could not be created')
-    end if
+          ! Use FMS method to create a checksum
+          chksum_i8 = sum(INT(TRANSFER(fields(var2)%array,mold),8))
+          call MPI_ALLREDUCE( MPI_IN_PLACE, chksum_i8, 1, MPI_INTEGER8, MPI_SUM, MPI_COMM_WORLD, ierr )
+          chksum = ""
+          write(chksum, "(Z16)") chksum_i8
+          call check( nf90_put_att(ncid(n), varid, "checksum", trim(chksum)) )
+        else
+          chunksizes = [geom%globalsizes(1), geom%globalsizes(2), 1]
+          call check( nf90_def_var(ncid(n), trim(fields(var2)%model_name), NF90_DOUBLE, (/ dimids(1), dimids(2), dimids(4) /), varid, chunksizes=chunksizes) )
+          call check( nf90_put_att(ncid(n), varid, "long_name", trim(fields(var2)%long_name)) )
+          call check( nf90_put_att(ncid(n), varid, "units", trim(fields(var2)%units)) )
 
-    call check ( nf90_set_fill(ncid(n), NF90_NOFILL, oldMode) )
-
-    do var = 1, num_restart_vars(n)
-      var2 = FileType(n)%VariableIndecies(var)
-      if(size(fields(var2)%array,3) > 1) then
-        chunksizes = [geom%globalsizes(1), geom%globalsizes(2), 1, 1]
-        call check( nf90_def_var(ncid(n), trim(fields(var2)%model_name), NF90_DOUBLE, dimids, varid, chunksizes=chunksizes) )
-        call check( nf90_put_att(ncid(n), varid, "long_name", trim(fields(var2)%long_name)) )
-        call check( nf90_put_att(ncid(n), varid, "units", trim(fields(var2)%units)) )
-
-        ! Use FMS method to create a checksum
-        chksum_i8 = sum(INT(TRANSFER(fields(var2)%array,mold),8))
-        call MPI_ALLREDUCE( MPI_IN_PLACE, chksum_i8, 1, MPI_INTEGER8, MPI_SUM, MPI_COMM_WORLD, ierr )
-        chksum = ""
-        write(chksum, "(Z16)") chksum_i8
-        call check( nf90_put_att(ncid(n), varid, "checksum", trim(chksum)) )
-      else
-        chunksizes = [geom%globalsizes(1), geom%globalsizes(2), 1]
-        call check( nf90_def_var(ncid(n), trim(fields(var2)%model_name), NF90_DOUBLE, (/ dimids(1), dimids(2), dimids(4) /), varid, chunksizes=chunksizes) )
-        call check( nf90_put_att(ncid(n), varid, "long_name", trim(fields(var2)%long_name)) )
-        call check( nf90_put_att(ncid(n), varid, "units", trim(fields(var2)%units)) )
-
-        ! Use FMS method to create a checksum
-        chksum_i8 = sum(INT(TRANSFER(fields(var2)%array,mold),8))
-        call MPI_ALLREDUCE( MPI_IN_PLACE, chksum_i8, 1, MPI_INTEGER8, MPI_SUM, MPI_COMM_WORLD, ierr )
-        chksum = ""
-        write(chksum, "(Z16)") chksum_i8
-        call check( nf90_put_att(ncid(n), varid, "checksum", trim(chksum)) )
-      endif
-    enddo ! var loop
+          ! Use FMS method to create a checksum
+          chksum_i8 = sum(INT(TRANSFER(fields(var2)%array,mold),8))
+          call MPI_ALLREDUCE( MPI_IN_PLACE, chksum_i8, 1, MPI_INTEGER8, MPI_SUM, MPI_COMM_WORLD, ierr )
+          chksum = ""
+          write(chksum, "(Z16)") chksum_i8
+          call check( nf90_put_att(ncid(n), varid, "checksum", trim(chksum)) )
+        endif
+      enddo ! var loop
+    endif
   endif
 enddo
 
 ! Exit define mode
 ! ----------------
 do n = 1, numfiles
-  if (rstflag(n)) then
+  if (rstflag(n) .and. .not. self%write_into_existing_files) then
     call check( nf90_enddef(ncid(n)) )
   endif
 enddo
@@ -1597,7 +1625,22 @@ do n = 1, numfiles
     do var = 1, num_restart_vars(n)
       var2 = FileType(n)%VariableIndecies(var)
 
-      call check( nf90_inq_varid(ncid(n), trim(fields(var2)%model_name), varid) )
+      if (self%write_into_existing_files) then
+        print *, 'write_existing debug rank=', rank, ' file_index=', n, ' var_index=', var2, &
+                 ' file=', trim(FileType(n)%FileName), ' long_name=', trim(fields(var2)%long_name), &
+                 ' model_name=', trim(fields(var2)%model_name), &
+                 ' io_name=', trim(ioname(trim(fields(var2)%long_name), field_io_names))
+        rc = nf90_inq_varid(ncid(n), trim(ioname(trim(fields(var2)%long_name), field_io_names)), varid)
+      else
+        rc = nf90_inq_varid(ncid(n), trim(fields(var2)%model_name), varid)
+      endif
+      if (rc /= nf90_noerr) then
+        print *, 'write_restart_all_reg inq_varid failed rank=', rank, &
+                 ' file=', trim(FileType(n)%FileName), ' long_name=', trim(fields(var2)%long_name), &
+                 ' model_name=', trim(fields(var2)%model_name), &
+                 ' io_name=', trim(ioname(trim(fields(var2)%long_name), field_io_names))
+      endif
+      call check(rc)
       call check( nf90_var_par_access(ncid(n), varid, nf90_collective) )
 
       start = (/ geom%isc,  geom%jsc,  1 /)
