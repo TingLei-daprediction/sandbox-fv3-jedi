@@ -50,6 +50,7 @@ public a_to_d_ad
 ! D to A grid winds (A is lonlat oriented)
 public d_to_a
 public d_to_a_ad
+public d_to_a_inverse
 
 ! D to C grid winds (A is cubed sphere)
 public d_to_a_to_c
@@ -1990,6 +1991,149 @@ u_ad_comp = u_ad(is:ie  ,js:je+1,:)
 v_ad_comp = v_ad(is:ie+1,js:je  ,:)
 
 end subroutine d_to_a_ad
+
+! --------------------------------------------------------------------------------------------------
+
+subroutine d_to_a_inverse(geom, ua_in, va_in, ud_out, vd_out, maxiter_in, lambda_in, tol_in)
+
+type(fv3jedi_geom),   intent(in)  :: geom
+real(kind=kind_real), intent(in)  :: ua_in(geom%isc:geom%iec,  geom%jsc:geom%jec,  geom%npz)
+real(kind=kind_real), intent(in)  :: va_in(geom%isc:geom%iec,  geom%jsc:geom%jec,  geom%npz)
+real(kind=kind_real), intent(out) :: ud_out(geom%isc:geom%iec,  geom%jsc:geom%jec+1,geom%npz)
+real(kind=kind_real), intent(out) :: vd_out(geom%isc:geom%iec+1,geom%jsc:geom%jec,  geom%npz)
+integer, optional,    intent(in)  :: maxiter_in
+real(kind=kind_real), optional, intent(in) :: lambda_in
+real(kind=kind_real), optional, intent(in) :: tol_in
+
+integer :: maxiter
+integer :: iter
+real(kind=kind_real) :: lambda
+real(kind=kind_real) :: tol
+real(kind=kind_real) :: rr_old
+real(kind=kind_real) :: rr_new
+real(kind=kind_real) :: pap
+real(kind=kind_real) :: alpha
+real(kind=kind_real) :: beta
+real(kind=kind_real) :: rhs_norm
+
+real(kind=kind_real), allocatable :: rhs_u(:,:,:)
+real(kind=kind_real), allocatable :: rhs_v(:,:,:)
+real(kind=kind_real), allocatable :: res_u(:,:,:)
+real(kind=kind_real), allocatable :: res_v(:,:,:)
+real(kind=kind_real), allocatable :: p_u(:,:,:)
+real(kind=kind_real), allocatable :: p_v(:,:,:)
+real(kind=kind_real), allocatable :: ap_u(:,:,:)
+real(kind=kind_real), allocatable :: ap_v(:,:,:)
+
+maxiter = 50
+if (present(maxiter_in)) maxiter = maxiter_in
+
+lambda = 1.0e-6_kind_real
+if (present(lambda_in)) lambda = lambda_in
+
+tol = 1.0e-10_kind_real
+if (present(tol_in)) tol = tol_in
+
+allocate(rhs_u(geom%isc:geom%iec,  geom%jsc:geom%jec+1, geom%npz))
+allocate(rhs_v(geom%isc:geom%iec+1,geom%jsc:geom%jec,   geom%npz))
+allocate(res_u(geom%isc:geom%iec,  geom%jsc:geom%jec+1, geom%npz))
+allocate(res_v(geom%isc:geom%iec+1,geom%jsc:geom%jec,   geom%npz))
+allocate(p_u(geom%isc:geom%iec,    geom%jsc:geom%jec+1, geom%npz))
+allocate(p_v(geom%isc:geom%iec+1,  geom%jsc:geom%jec,   geom%npz))
+allocate(ap_u(geom%isc:geom%iec,   geom%jsc:geom%jec+1, geom%npz))
+allocate(ap_v(geom%isc:geom%iec+1, geom%jsc:geom%jec,   geom%npz))
+
+call d_to_a_ad(geom, rhs_u, rhs_v, ua_in, va_in)
+
+ud_out = 0.0_kind_real
+vd_out = 0.0_kind_real
+
+res_u = rhs_u
+res_v = rhs_v
+p_u = res_u
+p_v = res_v
+
+rr_old = dot_product_dgrid_global(geom, res_u, res_v, res_u, res_v)
+rhs_norm = sqrt(max(rr_old, 0.0_kind_real))
+
+if (rhs_norm <= tol) then
+  deallocate(rhs_u, rhs_v, res_u, res_v, p_u, p_v, ap_u, ap_v)
+  return
+endif
+
+do iter = 1, maxiter
+  call apply_d_to_a_normal_operator(geom, p_u, p_v, ap_u, ap_v, lambda)
+
+  pap = dot_product_dgrid_global(geom, p_u, p_v, ap_u, ap_v)
+  if (pap <= 0.0_kind_real) exit
+
+  alpha = rr_old / pap
+
+  ud_out = ud_out + alpha * p_u
+  vd_out = vd_out + alpha * p_v
+  res_u = res_u - alpha * ap_u
+  res_v = res_v - alpha * ap_v
+
+  rr_new = dot_product_dgrid_global(geom, res_u, res_v, res_u, res_v)
+  if (sqrt(max(rr_new, 0.0_kind_real)) <= tol * rhs_norm) exit
+
+  beta = rr_new / rr_old
+  p_u = res_u + beta * p_u
+  p_v = res_v + beta * p_v
+  rr_old = rr_new
+enddo
+
+deallocate(rhs_u, rhs_v, res_u, res_v, p_u, p_v, ap_u, ap_v)
+
+end subroutine d_to_a_inverse
+
+! --------------------------------------------------------------------------------------------------
+
+subroutine apply_d_to_a_normal_operator(geom, ud_in, vd_in, ud_out, vd_out, lambda)
+
+type(fv3jedi_geom),   intent(in)  :: geom
+real(kind=kind_real), intent(in)  :: ud_in(geom%isc:geom%iec,  geom%jsc:geom%jec+1,geom%npz)
+real(kind=kind_real), intent(in)  :: vd_in(geom%isc:geom%iec+1,geom%jsc:geom%jec,  geom%npz)
+real(kind=kind_real), intent(out) :: ud_out(geom%isc:geom%iec,  geom%jsc:geom%jec+1,geom%npz)
+real(kind=kind_real), intent(out) :: vd_out(geom%isc:geom%iec+1,geom%jsc:geom%jec,  geom%npz)
+real(kind=kind_real), intent(in)  :: lambda
+
+real(kind=kind_real), allocatable :: ua_tmp(:,:,:)
+real(kind=kind_real), allocatable :: va_tmp(:,:,:)
+
+allocate(ua_tmp(geom%isc:geom%iec, geom%jsc:geom%jec, geom%npz))
+allocate(va_tmp(geom%isc:geom%iec, geom%jsc:geom%jec, geom%npz))
+
+call d_to_a(geom, ud_in, vd_in, ua_tmp, va_tmp)
+call d_to_a_ad(geom, ud_out, vd_out, ua_tmp, va_tmp)
+
+ud_out = ud_out + lambda * ud_in
+vd_out = vd_out + lambda * vd_in
+
+deallocate(ua_tmp, va_tmp)
+
+end subroutine apply_d_to_a_normal_operator
+
+! --------------------------------------------------------------------------------------------------
+
+function dot_product_dgrid_global(geom, u1, v1, u2, v2) result(global_dot)
+
+type(fv3jedi_geom),   intent(in) :: geom
+real(kind=kind_real), intent(in) :: u1(geom%isc:geom%iec,  geom%jsc:geom%jec+1,geom%npz)
+real(kind=kind_real), intent(in) :: v1(geom%isc:geom%iec+1,geom%jsc:geom%jec,  geom%npz)
+real(kind=kind_real), intent(in) :: u2(geom%isc:geom%iec,  geom%jsc:geom%jec+1,geom%npz)
+real(kind=kind_real), intent(in) :: v2(geom%isc:geom%iec+1,geom%jsc:geom%jec,  geom%npz)
+real(kind=kind_real) :: global_dot
+
+integer :: ierr
+real(kind=kind_real) :: local_dot
+
+local_dot = sum(u1 * u2) + sum(v1 * v2)
+
+call MPI_Allreduce(local_dot, global_dot, 1, MPI_DOUBLE_PRECISION, MPI_SUM, &
+                   geom%f_comm%communicator(), ierr)
+
+end function dot_product_dgrid_global
 
 ! --------------------------------------------------------------------------------------------------
 
