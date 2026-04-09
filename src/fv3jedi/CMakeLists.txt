@@ -189,12 +189,19 @@ string(JOIN " " FV3_FLAGS_STR
   ${FV3_FLAGS}
 )
 
-# Asign
+if(CMAKE_Fortran_COMPILER_ID MATCHES "Intel|IntelLLVM")
+  if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    string(APPEND FV3_FLAGS_STR " -check noarg_temp_created")
+  endif()
+endif()
+
 set_source_files_properties(
   ${fv3jedi_fv3_src_files}
   PROPERTIES
     COMPILE_FLAGS "${FV3_FLAGS_STR}"
 )
+
+# Asign
 
 # -------------------------------------------
 
@@ -236,6 +243,12 @@ elseif( FV3_FORECAST_MODEL MATCHES "UFS" )
   if(CMAKE_Fortran_COMPILER_ID MATCHES GNU)
     set_source_files_properties(${fv3jedi_ufs_src_files} PROPERTIES COMPILE_FLAGS "${CMAKE_Fortran_FLAGS} -ffree-line-length-none -fno-range-check ")
   endif()
+  if(CMAKE_Fortran_COMPILER_ID MATCHES "Intel")
+  target_compile_options(fv3jedi PRIVATE
+    $<$<CONFIG:Debug>:-check noarg_temp_created>
+    )
+  endif()
+
 
 endif()
 
