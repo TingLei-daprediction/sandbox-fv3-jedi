@@ -2024,6 +2024,8 @@ real(kind=kind_real), allocatable :: p_u(:,:,:)
 real(kind=kind_real), allocatable :: p_v(:,:,:)
 real(kind=kind_real), allocatable :: ap_u(:,:,:)
 real(kind=kind_real), allocatable :: ap_v(:,:,:)
+real(kind=kind_real), allocatable :: ua_tmp(:,:,:)
+real(kind=kind_real), allocatable :: va_tmp(:,:,:)
 
 maxiter = 50
 if (present(maxiter_in)) maxiter = maxiter_in
@@ -2042,6 +2044,8 @@ allocate(p_u(geom%isc:geom%iec,    geom%jsc:geom%jec+1, geom%npz))
 allocate(p_v(geom%isc:geom%iec+1,  geom%jsc:geom%jec,   geom%npz))
 allocate(ap_u(geom%isc:geom%iec,   geom%jsc:geom%jec+1, geom%npz))
 allocate(ap_v(geom%isc:geom%iec+1, geom%jsc:geom%jec,   geom%npz))
+allocate(ua_tmp(geom%isc:geom%iec, geom%jsc:geom%jec,   geom%npz))
+allocate(va_tmp(geom%isc:geom%iec, geom%jsc:geom%jec,   geom%npz))
 
 call d_to_a_ad(geom, rhs_u, rhs_v, ua_in, va_in)
 
@@ -2057,12 +2061,12 @@ rr_old = dot_product_dgrid_global(geom, res_u, res_v, res_u, res_v)
 rhs_norm = sqrt(max(rr_old, 0.0_kind_real))
 
 if (rhs_norm <= tol) then
-  deallocate(rhs_u, rhs_v, res_u, res_v, p_u, p_v, ap_u, ap_v)
+  deallocate(rhs_u, rhs_v, res_u, res_v, p_u, p_v, ap_u, ap_v, ua_tmp, va_tmp)
   return
 endif
 
 do iter = 1, maxiter
-  call apply_d_to_a_normal_operator(geom, p_u, p_v, ap_u, ap_v, lambda)
+  call apply_d_to_a_normal_operator(geom, p_u, p_v, ap_u, ap_v, lambda, ua_tmp, va_tmp)
 
   pap = dot_product_dgrid_global(geom, p_u, p_v, ap_u, ap_v)
   if (pap <= 0.0_kind_real) exit
@@ -2083,13 +2087,13 @@ do iter = 1, maxiter
   rr_old = rr_new
 enddo
 
-deallocate(rhs_u, rhs_v, res_u, res_v, p_u, p_v, ap_u, ap_v)
+deallocate(rhs_u, rhs_v, res_u, res_v, p_u, p_v, ap_u, ap_v, ua_tmp, va_tmp)
 
 end subroutine d_to_a_inverse
 
 ! --------------------------------------------------------------------------------------------------
 
-subroutine apply_d_to_a_normal_operator(geom, ud_in, vd_in, ud_out, vd_out, lambda)
+subroutine apply_d_to_a_normal_operator(geom, ud_in, vd_in, ud_out, vd_out, lambda, ua_tmp, va_tmp)
 
 type(fv3jedi_geom),   intent(in)  :: geom
 real(kind=kind_real), intent(in)  :: ud_in(geom%isc:geom%iec,  geom%jsc:geom%jec+1,geom%npz)
@@ -2097,20 +2101,14 @@ real(kind=kind_real), intent(in)  :: vd_in(geom%isc:geom%iec+1,geom%jsc:geom%jec
 real(kind=kind_real), intent(out) :: ud_out(geom%isc:geom%iec,  geom%jsc:geom%jec+1,geom%npz)
 real(kind=kind_real), intent(out) :: vd_out(geom%isc:geom%iec+1,geom%jsc:geom%jec,  geom%npz)
 real(kind=kind_real), intent(in)  :: lambda
-
-real(kind=kind_real), allocatable :: ua_tmp(:,:,:)
-real(kind=kind_real), allocatable :: va_tmp(:,:,:)
-
-allocate(ua_tmp(geom%isc:geom%iec, geom%jsc:geom%jec, geom%npz))
-allocate(va_tmp(geom%isc:geom%iec, geom%jsc:geom%jec, geom%npz))
+real(kind=kind_real), intent(inout) :: ua_tmp(geom%isc:geom%iec,geom%jsc:geom%jec,geom%npz)
+real(kind=kind_real), intent(inout) :: va_tmp(geom%isc:geom%iec,geom%jsc:geom%jec,geom%npz)
 
 call d_to_a(geom, ud_in, vd_in, ua_tmp, va_tmp)
 call d_to_a_ad(geom, ud_out, vd_out, ua_tmp, va_tmp)
 
 ud_out = ud_out + lambda * ud_in
 vd_out = vd_out + lambda * vd_in
-
-deallocate(ua_tmp, va_tmp)
 
 end subroutine apply_d_to_a_normal_operator
 
