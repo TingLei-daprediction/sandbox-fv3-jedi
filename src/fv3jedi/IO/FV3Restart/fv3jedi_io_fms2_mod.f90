@@ -1043,6 +1043,10 @@ endif
       if(kind_real /= c_float) then
         allocate(real(kind=c_float) :: fields(var2)%array_file_scatter(geom%localsizes(1), geom%localsizes(2), 1))
       endif
+    case (NF90_DOUBLE)
+      if(kind_real /= c_double) then
+        allocate(real(kind=c_double) :: fields(var2)%array_file_scatter(geom%localsizes(1), geom%localsizes(2), 1))
+      endif
     case default
       write(6,'("read_restart_fields_reg: Unknown NetCDF type for variable: ",3I4,2A)') nc_vartype(var), var, var2,' ',trim(fields(var)%long_name)
       call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
