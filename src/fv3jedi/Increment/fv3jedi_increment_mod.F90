@@ -249,7 +249,7 @@ call conf%get_or_die("ndir",ndir)
 
 if (.not. conf%get("dirac generation batch mode", l_dirac_gen_mode)) l_dirac_gen_mode = .false.
 if( l_dirac_gen_mode ) then
-   if (.not. conf%get("dirac generation file ", file_dirac_gen_data)) &
+   if (.not. conf%get("dirac generation file", file_dirac_gen_data)) &
      call abor1_ftn("fv3jedi_increment_mod.dirac: dirac generation file not provided")
 endif
 write(6,*)'thinkdeb999 l_dira_gen_mod ',l_dirac_gen_mode
