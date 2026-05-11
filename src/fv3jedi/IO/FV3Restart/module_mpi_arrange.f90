@@ -23,7 +23,7 @@ module module_mpi_arrange
 
   implicit none
 
-  integer,parameter :: max_varname_length=20
+  integer,parameter :: max_varname_length=72
 !
 ! Rset default to private
 !
@@ -45,6 +45,7 @@ module module_mpi_arrange
     contains
       procedure :: init
       procedure :: arrange
+      procedure :: arrange_direct
       procedure :: close
   end type mpi_io_arrange
 !
@@ -275,6 +276,12 @@ contains
     ! Need all ranks to know the global dimensions.  Assume all variables have the soam horizontal dimensions
     where(nx(:)==0) nx=nx(1)
     where(ny(:)==0) ny=ny(1)
+
+    !write(6,'(2a5,2x,a10,10a10)') "core","fid","varname","vartype","nx","ny","lvlbegin","lvlend"
+    !do k=1,ntotalcore
+    !   write(6,'(2I5,2x,a10,10I10)') k,fileid(k),trim(varname(k)),vartype(k),nx(k),ny(k),lvlbegin(k),lvlend(k)
+    !enddo
+    !write(6,*) "======================================================================="
 !
 !  save results
 !
@@ -301,5 +308,110 @@ contains
     deallocate(ie)
 
   end subroutine arrange
+
+  subroutine arrange_direct(this, numvar, list_varname, dim_1, dim_2, dim_3, num_dim, vartype, fileid_in)
+    implicit none
+    class(mpi_io_arrange) :: this
+    integer, intent(in) :: numvar
+    character(len=*), intent(in) :: list_varname(numvar)
+    integer, intent(in) :: dim_1(numvar), dim_2(numvar), dim_3(numvar)
+    integer, intent(in) :: num_dim(numvar), vartype(numvar), fileid_in(numvar)
+
+    integer :: ntotalcore, nlvl2d, nlvl3d, nlvl3d_small, nlvlcore, nlvlmax
+    integer, allocatable :: nlvl3d_list(:)
+    integer :: i, k, nn, n3d, nz, mynlvl3d
+
+    ntotalcore = this%ntotalcore
+    this%varname = ""; this%fileid = 0; this%vartype = 0
+    this%lvlbegin = 0; this%lvlend = 0; this%nx = 0; this%ny = 0
+
+    ! Count levels for distribution
+    nlvl2d=0; nlvl3d=0; nlvl3d_small=0; nlvlmax=0
+    do k=1, numvar
+       if(num_dim(k) == 3) then
+          if(dim_3(k) <= 10) then
+            nlvl3d_small = nlvl3d_small + dim_3(k)
+          else
+            nlvl3d = nlvl3d + 1
+          endif
+       endif
+       if(num_dim(k) == 2) nlvl2d = nlvl2d + 1
+       if(nlvlmax < dim_3(k)) nlvlmax=dim_3(k)
+    enddo
+    write(6,*) 'total 2d_level=',nlvl2d,' 3d_level=',nlvl3d, &
+               ' 3d_level_small =',nlvl3d_small
+    write(6,*) 'max level =',nlvlmax
+
+    ! Calculate cores per 3D field
+    if(nlvl3d > 0) then
+      allocate(nlvl3d_list(nlvl3d))
+      nlvlcore = (ntotalcore - nlvl2d - nlvl3d_small) / nlvl3d
+      nlvl3d_list = nlvlcore
+      nlvlcore = (ntotalcore - nlvl2d - nlvl3d_small) - nlvl3d * nlvlcore
+      if(nlvlcore > 0 ) then
+          do k=1, nlvlcore
+            nlvl3d_list(k) = nlvl3d_list(k) + 1
+          enddo
+      endif
+      write(6,*) 'cores for each 3D fields=',nlvl3d_list
+    endif
+
+    nn = 0
+    n3d = 0
+    do i=1, numvar
+       if(num_dim(i) == 3 .and. dim_3(i) > 10) then
+          ! Distributed 3D field
+          n3d = n3d + 1
+          nz = dim_3(i)
+          mynlvl3d = min(nlvl3d_list(n3d), nz)
+          nlvlcore = nz / mynlvl3d
+          do k=1, mynlvl3d
+             nn = nn + 1
+             if(nn > ntotalcore) exit
+             this%varname(nn) = trim(list_varname(i))
+             this%vartype(nn) = vartype(i)
+             this%nx(nn) = dim_1(i)
+             this%ny(nn) = dim_2(i)
+             this%fileid(nn) = fileid_in(i)
+
+             ! Use explicit if/else to avoid out-of-bounds on nn=1
+             if (nn == 1 .or. k == 1) then
+                this%lvlbegin(nn) = 1
+             else
+                this%lvlbegin(nn) = this%lvlend(nn-1) + 1
+             endif
+
+             this%lvlend(nn) = this%lvlbegin(nn) + nlvlcore - 1
+             if(k <= (nz - nlvlcore * mynlvl3d)) this%lvlend(nn) = this%lvlend(nn) + 1
+          enddo
+       else
+          ! 2D field or small 3D field
+          nz = merge(dim_3(i), 1, num_dim(i) == 3)
+          do k=1, nz
+             nn = nn + 1
+             if(nn > ntotalcore) exit
+             this%varname(nn) = trim(list_varname(i))
+             this%vartype(nn) = vartype(i)
+             this%nx(nn) = dim_1(i)
+             this%ny(nn) = dim_2(i)
+             this%fileid(nn) = fileid_in(i)
+             this%lvlbegin(nn) = k
+             this%lvlend(nn) = k
+          enddo
+       endif
+    enddo
+
+    ! Need all ranks to know the global dimensions.  Assume all variables have the same horizontal dimensions
+    where(this%nx(:)==0) this%nx=this%nx(1)
+    where(this%ny(:)==0) this%ny=this%ny(1)
+
+    !write(6,'(2a5,2x,a45,10a10)') "core","fid","varname","vartype","nx","ny","lvlbegin","lvlend"
+    !do k=1,ntotalcore
+    !   write(6,'(2I5,2x,a45,10I10)') k,this%fileid(k),trim(this%varname(k)),this%vartype(k),this%nx(k),this%ny(k),this%lvlbegin(k),this%lvlend(k)
+    !enddo
+    !write(6,*) "======================================================================="
+
+    if(allocated(nlvl3d_list)) deallocate(nlvl3d_list)
+  end subroutine arrange_direct
 
 end module module_mpi_arrange
