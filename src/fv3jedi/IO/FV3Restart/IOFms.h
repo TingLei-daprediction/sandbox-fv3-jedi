@@ -100,6 +100,19 @@ class IOFmsParameters : public IOParametersBase {
   oops::OptionalParameter<std::vector<std::string>> fields_to_write{"fields to write",
                                                                     "names of fields to write",
                                                                     this};
+  // Write values into pre-existing restart files instead of recreating metadata
+  // (currently used only in the regional restart write path)
+  oops::Parameter<bool> write_into_existing_files{"write into existing files",
+                                                  "true or false",
+                                                  false, this};
+
+  // Write analysis variables in specified bit depth
+  // (currently used only in the regional restart write path)
+  // "native, 32bit or 64bit"
+  oops::Parameter<std::string> default_output_resolution{"default output resolution",
+                                                         "native, 32bit or 64bit",
+                                                         "native", this};
+
 };
 
 // -------------------------------------------------------------------------------------------------
