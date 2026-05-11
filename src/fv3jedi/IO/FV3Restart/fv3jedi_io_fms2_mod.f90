@@ -694,13 +694,6 @@ character(len=12) :: stripeSize_str
 
 integer :: b_start, b_end, n_in_batch, b_ind, owner
 
-#ifdef DEBUG
-! Declare variables needed for status checking
-integer, allocatable :: MPI_Statuses(:, :) ! Size must match your request count
-integer :: req_idx, err_code, resultlen, dummy_ierr
-character(len=MPI_MAX_ERROR_STRING) :: error_string
-#endif
-
 rank=mpp_pe()
 npes=mpp_npes()
 
@@ -795,10 +788,10 @@ if( (fields_changed) .or. &
   ! This assumes the bkg and ens files are the same resolution.
   ! -------------------------------------------------------------------------
   rstflag(:) = .false.
-  do var = 1,size(fields)
+  do jedi_var_idx = 1,size(fields)
     ! If need ps is not in file will compute from delp so read delp in place of ps, but only if delp is NOT already present in the fields array
-    if (trim(fields(var)%long_name) == 'air_pressure_at_surface' .and. .not.self%ps_in_file) then
-      indexof_ps = var
+    if (trim(fields(jedi_var_idx)%long_name) == 'air_pressure_at_surface' .and. .not.self%ps_in_file) then
+      indexof_ps = jedi_var_idx
       if (havedelp) then
         fields(indexof_ps)%model_name = ''   ! PS will be computed, not read
         cycle ! Do not register delp twice
@@ -821,25 +814,16 @@ if( (fields_changed) .or. &
     endif
 
     ! Get file to use
-    call get_io_file(self, fields(var), indexrst)
+    call get_io_file(self, fields(jedi_var_idx), indexrst)
 
     ! Get UFS variable name
-    if(rank==336) then
-      if (field_io_names_local%has(trim(fields(var)%long_name))) then
-        write(6,'("read_restart_fields_reg: Found long_name in field_io_names ",3A)') &
-         trim(fields(var)%long_name),' -> ',trim(ioname(trim(fields(var)%long_name), field_io_names_local))
-      else
-        write(6,'("read_restart_fields_reg: long_name NOT found in field_io_names ",3A)') &
-         trim(fields(var)%long_name),' -> ',trim(ioname(trim(fields(var)%long_name), field_io_names_local))
-      endif
-    endif
-    fields(var)%model_name = ioname(trim(fields(var)%long_name), field_io_names_local)
+    fields(jedi_var_idx)%model_name = ioname(trim(fields(jedi_var_idx)%long_name), field_io_names_local)
 
     ! Append variable name onto list for each file.  Will need a mapping between this list and the order in the fields array
     if (len_trim(tmpvarlist(indexrst)) > 0) then
-      tmpvarlist(indexrst)=trim(tmpvarlist(indexrst)) //' '// trim(fields(var)%model_name)
+      tmpvarlist(indexrst)=trim(tmpvarlist(indexrst)) //' '// trim(fields(jedi_var_idx)%model_name)
     else
-      tmpvarlist(indexrst)=trim(fields(var)%model_name)
+      tmpvarlist(indexrst)=trim(fields(jedi_var_idx)%model_name)
     endif
 
     rstflag(indexrst) = .true.  ! prevent opening this file again
@@ -964,9 +948,9 @@ if( (fields_changed) .or. &
   allocate(LevelToVariableMap(ntotallev))
   LevelToVariableMap(:) = -999
   l=1
-  do var=1,sum(numvar)
-    do i=1,nlevpervar(var)
-      LevelToVariableMap(l) = var
+  do file_var_idx=1,sum(numvar)
+    do i=1,nlevpervar(file_var_idx)
+      LevelToVariableMap(l) = file_var_idx
       l=l+1
     enddo
   enddo
@@ -983,8 +967,8 @@ if( (fields_changed) .or. &
   allocate(LevelToLevelMap(ntotallev))
   LevelToLevelMap(:) = -999
   l=1
-  do var=1,sum(numvar)
-    do i=1,nlevpervar(var)
+  do file_var_idx=1,sum(numvar)
+    do i=1,nlevpervar(file_var_idx)
       LevelToLevelMap(l) = i
       l=l+1
     enddo
@@ -1010,17 +994,6 @@ if( (fields_changed) .or. &
       endif
     enddo
   enddo
-
-!  do var = 1,size(fields)
-!    do jedi_var_idx = 1,sum(numvar)
-!      if (trim(fields(var)%model_name) .ne. trim(varnames(jedi_var_idx))) then
-!        cycle
-!      else
-!        VarToVarMap(jedi_var_idx) = var
-!        exit
-!      endif
-!    enddo
-!  enddo
   deallocate(varnames)
 
   if (any(VarToVarMap(:) == -999)) then
@@ -1054,10 +1027,10 @@ endif ! First pass
 
 ! Reallocate space to hold delp if needed
 if (need_to_reallocate_ps) then
-  do var = 1,size(fields)
+  do jedi_var_idx = 1,size(fields)
     ! If need ps is not in file will compute from delp so read delp in place of ps, but only if delp is NOT already present in the fields array
-    if (trim(fields(var)%long_name) == 'air_pressure_at_surface' .and. .not.self%ps_in_file) then
-      indexof_ps = var
+    if (trim(fields(jedi_var_idx)%long_name) == 'air_pressure_at_surface' .and. .not.self%ps_in_file) then
+      indexof_ps = jedi_var_idx
       if (havedelp) then
         fields(indexof_ps)%model_name = ''   ! PS will be computed, not read
         cycle ! Do not register delp twice
@@ -1167,79 +1140,44 @@ endif
     reqs_p1(:) = MPI_REQUEST_NULL
     do b_ind = 1, n_in_batch
       level = b_start + b_ind - 1
-      var = LevelToVariableMap(level) ! NetCDF File space
+      file_var_idx = LevelToVariableMap(level) ! NetCDF File space
       owner = LevelToProcMap(level)
 
       if(rank == owner) then
         ! Compiler automatically routes to _r4 or _r8 based on d3r4/d3r8
-        if(nc_vartype(var) == NF90_FLOAT) then
+        if(nc_vartype(file_var_idx) == NF90_FLOAT) then
           call TwoPhaseScatter_Phase1(geom, owner, rank, d3r4(:,:,l), b_ind, reqs_p1(b_ind))
-        elseif(nc_vartype(var) == NF90_DOUBLE .and. kind_real == c_double) then
+        elseif(nc_vartype(file_var_idx) == NF90_DOUBLE .and. kind_real == c_double) then
           call TwoPhaseScatter_Phase1(geom, owner, rank, d3r8(:,:,l), b_ind, reqs_p1(b_ind))
-        elseif(nc_vartype(var) == NF90_DOUBLE .and. kind_real == c_float) then
+        elseif(nc_vartype(file_var_idx) == NF90_DOUBLE .and. kind_real == c_float) then
           call TwoPhaseScatter_Phase1(geom, owner, rank, d3r4(:,:,l), b_ind, reqs_p1(b_ind))
         endif
         l=l+1
       else
         ! Non-owners pass the explicitly typed dummy targets
-        if(nc_vartype(var) == NF90_FLOAT) then
+        if(nc_vartype(file_var_idx) == NF90_FLOAT) then
           call TwoPhaseScatter_Phase1(geom, owner, rank, dummy_r4, b_ind, reqs_p1(b_ind))
-        elseif(nc_vartype(var) == NF90_DOUBLE .and. kind_real == c_double) then
+        elseif(nc_vartype(file_var_idx) == NF90_DOUBLE .and. kind_real == c_double) then
           call TwoPhaseScatter_Phase1(geom, owner, rank, dummy_r8, b_ind, reqs_p1(b_ind))
-        elseif(nc_vartype(var) == NF90_DOUBLE .and. kind_real == c_float) then
+        elseif(nc_vartype(file_var_idx) == NF90_DOUBLE .and. kind_real == c_float) then
           call TwoPhaseScatter_Phase1(geom, owner, rank, dummy_r4, b_ind, reqs_p1(b_ind))
         endif
       endif
     end do
 
     ! Wait for all columns to reach the intermediate Row-Roots
-#ifdef DEBUG
-    allocate(MPI_Statuses(MPI_STATUS_SIZE, n_in_batch))
-    call MPI_Waitall(n_in_batch, reqs_p1, MPI_Statuses, ierr)
-
-    ! Check if any of the underlying batch requests failed
-    if (ierr == MPI_ERR_IN_STATUS) then
-
-      ! Loop through the active requests to isolate the failure
-      do req_idx = 1, n_in_batch
-          err_code = MPI_Statuses(MPI_ERROR, req_idx)
-
-          if (err_code /= MPI_SUCCESS) then
-            call MPI_Error_string(err_code, error_string, resultlen, dummy_ierr)
-
-            ! Print the exact request index and the error message
-            write(6, '("MPI_Waitall Error in Batch Loop after TwoPhaseScatter_Phase1! Request Index ", I0, " Failed: ", A)') &
-                  req_idx, error_string(1:resultlen)
-          endif
-      enddo
-
-      deallocate(MPI_Statuses)
-      call flush(6)
-      call MPI_Abort(geom%f_comm%communicator(), 99, dummy_ierr)
-
-    ! Catch any broader MPI failure not tied to a specific status
-    elseif (ierr /= MPI_SUCCESS) then
-      call MPI_Error_string(ierr, error_string, resultlen, dummy_ierr)
-      write(6, '("Fatal MPI_Waitall Error in Batch Loop after TwoPhaseScatter_Phase1: ", A)') error_string(1:resultlen)
-      deallocate(MPI_Statuses)
-      call flush(6)
-      call MPI_Abort(geom%f_comm%communicator(), 99, dummy_ierr)
-    endif
-    deallocate(MPI_Statuses)
-#else
     call MPI_Waitall(n_in_batch, reqs_p1, MPI_STATUSES_IGNORE, ierr)
-#endif
 
     ! POST ALL PHASE 2 REQUESTS (Row Scatter)
     ! ---------------------------------------
     reqs_p2(:) = MPI_REQUEST_NULL
     do b_ind = 1, n_in_batch
       level = b_start + b_ind - 1
-      var = LevelToVariableMap(level) ! NetCDF File space
-      jedi_var_idx = VarToVarMap(var)         ! JEDI space
+      file_var_idx = LevelToVariableMap(level) ! NetCDF File space
+      jedi_var_idx = VarToVarMap(file_var_idx)         ! JEDI space
       owner = LevelToProcMap(level)
 
-      if(nc_vartype(var) == NF90_FLOAT .and. kind_real == c_double) then
+      if(nc_vartype(file_var_idx) == NF90_FLOAT .and. kind_real == c_double) then
         ! Route directly into the shared module casting workspace
         call TwoPhaseScatter_Phase2(geom, owner, rank, scatter_recv_cast_workspace_r4(:,:,b_ind), b_ind, reqs_p2(b_ind))
       else
@@ -1249,52 +1187,17 @@ endif
     end do
 
     ! Wait for all rows to hit the final destination ranks
-#ifdef DEBUG
-    allocate(MPI_Statuses(MPI_STATUS_SIZE, n_in_batch))
-    call MPI_Waitall(n_in_batch, reqs_p2, MPI_Statuses, ierr)
-
-    ! Check if any of the underlying batch requests failed
-    if (ierr == MPI_ERR_IN_STATUS) then
-
-      ! Loop through the active requests to isolate the failure
-      do req_idx = 1, n_in_batch
-          err_code = MPI_Statuses(MPI_ERROR, req_idx)
-
-          if (err_code /= MPI_SUCCESS) then
-            call MPI_Error_string(err_code, error_string, resultlen, dummy_ierr)
-
-            ! Print the exact request index and the error message
-            write(6, '("MPI_Waitall Error in Batch Loop after TwoPhaseScatter_Phase2! Request Index ", I0, " Failed: ", A)') &
-                  req_idx, error_string(1:resultlen)
-          endif
-      enddo
-
-      deallocate(MPI_Statuses)
-      call flush(6)
-      call MPI_Abort(geom%f_comm%communicator(), 99, dummy_ierr)
-
-    ! Catch any broader MPI failure not tied to a specific status
-    elseif (ierr /= MPI_SUCCESS) then
-      call MPI_Error_string(ierr, error_string, resultlen, dummy_ierr)
-      write(6, '("Fatal MPI_Waitall Error in Batch Loop after TwoPhaseScatter_Phase2: ", A)') error_string(1:resultlen)
-      deallocate(MPI_Statuses)
-      call flush(6)
-      call MPI_Abort(geom%f_comm%communicator(), 99, dummy_ierr)
-    endif
-    deallocate(MPI_Statuses)
-#else
     call MPI_Waitall(n_in_batch, reqs_p2, MPI_STATUSES_IGNORE, ierr)
-#endif
 
     ! POST-PROCESS: Type Conversions
     ! ------------------------------
     do b_ind = 1, n_in_batch
       level = b_start + b_ind - 1
-      var = LevelToVariableMap(level)
-      jedi_var_idx = VarToVarMap(var)         ! JEDI space
+      file_var_idx = LevelToVariableMap(level)
+      jedi_var_idx = VarToVarMap(file_var_idx)         ! JEDI space
 
       ! Only convert the scenarios that used the staging buffer
-      if(nc_vartype(var) == NF90_FLOAT .and. kind_real == c_double) then
+      if(nc_vartype(file_var_idx) == NF90_FLOAT .and. kind_real == c_double) then
         ! Pull from the shared workspace at b_ind, and cast into the true Level slice
         fields(jedi_var_idx)%array(:,:,LevelToLevelMap(level)) = real(scatter_recv_cast_workspace_r4(:,:,b_ind), kind=kind_real)
       endif
@@ -1329,15 +1232,6 @@ endif
     fields(indexof_ps)%model_name = 'air_pressure_at_surface'
     fields(indexof_ps)%npz = 1
   endif
-
-  !do var = 1,size(fields)
-  !  chksum_i8 = sum(INT(TRANSFER(fields(var)%array(:,:,:),mold8),8))
-  !  call MPI_Allreduce( MPI_IN_PLACE, chksum_i8, 1, MPI_INTEGER8, MPI_SUM, geom%f_comm%communicator(), ierr )
-  !  chksum = ""
-  !  write(chksum, "(Z16)") chksum_i8
-  !  if(rank == 0) write(6,'("Checksum for var after scatter "4A,2I4)') trim(fields(var)%model_name),' ',chksum,' ',&
-  !                           digits(fields(var)%array(1,1,1)), kind(fields(var)%array(1,1,1))
-  !enddo
 
 end subroutine read_restart_fields_reg
 
@@ -1574,19 +1468,14 @@ real(kind=c_double) :: NaN_r8
 character(len=72), allocatable :: tmp_names(:)
 integer,           allocatable :: tmp_d1(:), tmp_d2(:), tmp_d3(:)
 integer,           allocatable :: tmp_nd(:), tmp_vt(:), tmp_fid(:)
+
+integer, allocatable :: out_fileid(:), out_lvlbegin(:), out_lvlend(:)
+character(len=72), allocatable :: out_varname(:)
 integer :: file_idx, var_type_tmp
 
 logical :: havedelp, haveps, flag
 integer :: indexof_ps, indexof_delp
 logical :: write_field, file_exists(numfiles)
-
-#ifdef DEBUG
-! Declare variables needed for status checking
-integer, allocatable :: MPI_Statuses(:, :) ! Size must match your request count
-integer :: req_idx, err_code, resultlen, dummy_ierr
-character(len=MPI_MAX_ERROR_STRING) :: error_string
-#endif
-
 
 NaN_r4=IEEE_VALUE(NaN_r4, IEEE_SIGNALING_NAN)
 NaN_r8=IEEE_VALUE(NaN_r8, IEEE_SIGNALING_NAN)
@@ -1686,9 +1575,6 @@ do jedi_var_idx = 1,size(fields)
   io_unscaling_factor = iounscale(fields(jedi_var_idx)%long_name, field_io_scaling)
 enddo
 
-if(allocated(nlev)) deallocate(nlev)
-allocate(nlev(0:npes-1))
-
 totalnumfiles=count(rstflag(:) .eq. .true.)
 if(allocated(FileNamesToProcess)) deallocate(FileNamesToProcess)
 allocate(FileNamesToProcess(totalnumfiles))
@@ -1696,6 +1582,9 @@ allocate(FileNamesToProcess(totalnumfiles))
 allocate(numvarfile(totalnumfiles))
 allocate(varlist(totalnumfiles))
 
+! Create output file names, determine if the files exists.
+! Make sure user controllable options make sense and print some diagnostics
+! -------------------------------------------------------------------------
 i=1
 do n=1, numfiles
   if ( rstflag(n) ) then
@@ -1738,7 +1627,6 @@ do n=1, numfiles
         endif
       endif
     else
-
       if(self%write_into_existing_files) then
         if (.not. file_exists(i)) then
           if(rank==0) write(6,'("ERROR: fields_to_write is set, write_into_existing_files=true yet the file does not exist ",A)') trim(FileNamesToProcess(i))
@@ -1766,18 +1654,16 @@ do n=1, numfiles
           case ('native')
             if(rank==0) write(6,'("Clobber existing file and write specified fields in JEDI native bitdepth. write_into_existing_files=false and the file exists. ",A)') trim(FileNamesToProcess(i))
           case ('32bit')
-            if(rank==0) write(6,'("Clobber existing file and write specified fields in JEDI 32-bit bitdepth. write_into_existing_files=false and the file exists. ",A)') trim(FileNamesToProcess(i))
+            if(rank==0) write(6,'("Clobber existing file and write specified fields in user specified 32-bit bitdepth. write_into_existing_files=false and the file exists. ",A)') trim(FileNamesToProcess(i))
           case ('64bit')
-            if(rank==0) write(6,'("Clobber existing file and write specified fields in JEDI 64-bit bitdepth. write_into_existing_files=false and the file exists. ",A)') trim(FileNamesToProcess(i))
+            if(rank==0) write(6,'("Clobber existing file and write specified fields in user specified 64-bit bitdepth. write_into_existing_files=false and the file exists. ",A)') trim(FileNamesToProcess(i))
           case default
             if(rank==0) write(6,'("write_restart_all_reg: ERROR Unrecognized default_output_resolution")')
             call flush(6)
             call MPI_Abort(geom%f_comm%communicator(),43,ierr)
           end select
-          if(rank==0) write(6,'("Clobber existing file and write specified fields in JEDI bitdepth. write_into_existing_files=false and the file exists. ",A)') trim(FileNamesToProcess(i))
         endif
       endif
-
     endif
     i=i+1
   endif
@@ -1823,8 +1709,11 @@ allocate(nc_vartype(sum(numvarfile)))
 ! init on all ranks to avoid passing unallocated allocatable to MPI_Scatter
 call mpiioarg%init(npes)
 
+if(allocated(nlev)) deallocate(nlev)
+allocate(nlev(0:npes-1))
+
 ! Scan the supplied output files to determine variable type, number of levels then
-! call call mpiioarg to evenly distribute the load among the available nodes/ranks
+! distribute the load evenly among the available nodes/ranks
 if(all(file_exists(1:totalnumfiles) == .true.)) then
   if (spread_mype == 0) then
     call ncfs_all%init(totalnumfiles, FileNamesToProcess, numvarfile, varlist)
@@ -1848,83 +1737,85 @@ if(all(file_exists(1:totalnumfiles) == .true.)) then
     numvarfile(:) = ncfs_all%numvarfile(:)  ! Number of variables in each file
     call ncfs_all%close()
   end if
-else
-  if (spread_mype == 0) then
-    nn = sum(numvarfile) ! Total variables across all files
 
-    ! Create temporary arrays to hold field info for the arranger
-    allocate(tmp_names(nn), tmp_d1(nn), tmp_d2(nn), tmp_d3(nn), tmp_nd(nn), tmp_vt(nn), tmp_fid(nn))
+  ! Let all ranks know what is going on
+  call MPI_Scatter(mpiioarg%fileid  ,  1,   mpi_integer, mype_fileid ,  1, mpi_integer  , 0, spread_comm,ierr)
+  call MPI_Scatter(mpiioarg%varname , 72, mpi_character, mype_varname, 72, mpi_character, 0, spread_comm,ierr)
+  call MPI_Scatter(mpiioarg%vartype ,  1,   mpi_integer, mype_vartype,  1, mpi_integer  , 0, spread_comm,ierr)
+  call MPI_Scatter(mpiioarg%lvlbegin,  1,   mpi_integer, mype_lbegin ,  1, mpi_integer  , 0, spread_comm,ierr)
+  call MPI_Scatter(mpiioarg%lvlend  ,  1,   mpi_integer, mype_lend   ,  1, mpi_integer  , 0, spread_comm,ierr)
+  call mpiioarg%close()
 
-    select case (trim(self%default_output_resolution))
-    case ('native')
-      if (kind_real == c_double) then
-        var_type_tmp    = NF90_DOUBLE
-      else
-        var_type_tmp    = NF90_FLOAT
-      endif
-    case ('32bit')
-      var_type_tmp    = NF90_FLOAT
-    case ('64bit')
-      var_type_tmp    = NF90_DOUBLE
-    case default
-      if(rank==0) write(6,'("write_restart_all_reg: ERROR Unrecognized default_output_resolution")')
-      call flush(6)
-      call MPI_Abort(geom%f_comm%communicator(),43,ierr)
-    end select
+  call MPI_Bcast(ntotallev    , 1, mpi_integer, 0, spread_comm,ierr)
+  call MPI_Bcast(nlev(0)      , npes, mpi_integer, 0, spread_comm,ierr)
+  call MPI_Bcast(nlevpervar(1), sum(numvarfile), mpi_integer, 0, spread_comm,ierr)
+  call MPI_Bcast(varnames(1)  , 72*sum(numvarfile), mpi_character, 0, spread_comm,ierr)
+  call MPI_Bcast(nc_vartype(1), sum(numvarfile), mpi_integer, 0, spread_comm,ierr)
 
-    i = 0
-    file_idx = 0
-    do n = 1, numfiles
-      if (.not. rstflag(n)) cycle
-      file_idx = file_idx + 1
-      do k = 1, num_restart_vars(n)
-        i = i + 1
-        jedi_var_idx = FileType(n)%VariableIndecies(k)
+else  ! No files provided.  All ranks compute the distribution locally
+  nn = sum(numvarfile) ! Total variables across all files
 
-        tmp_names(i) = trim(fields(jedi_var_idx)%model_name)
-        tmp_d1(i)    = geom%globalsizes(1)
-        tmp_d2(i)    = geom%globalsizes(2)
-        tmp_d3(i)    = size(fields(jedi_var_idx)%array, 3)
-        tmp_nd(i)    = merge(3, 2, tmp_d3(i) > 1)
-        tmp_vt(i)    = var_type_tmp
-        tmp_fid(i)   = file_idx
-      end do
+  ! Create temporary arrays to hold field info for the arranger
+  allocate(tmp_names(nn), tmp_d1(nn), tmp_d2(nn), tmp_d3(nn), tmp_nd(nn), tmp_vt(nn), tmp_fid(nn))
+  allocate(out_fileid(npes), out_varname(npes), out_lvlbegin(npes), out_lvlend(npes))
+
+  select case (trim(self%default_output_resolution))
+  case ('native')
+    var_type_tmp = merge(NF90_DOUBLE, NF90_FLOAT, kind_real == c_double)
+  case ('32bit')
+    var_type_tmp    = NF90_FLOAT
+  case ('64bit')
+    var_type_tmp    = NF90_DOUBLE
+  case default
+    if(rank==0) write(6,'("write_restart_all_reg: ERROR Unrecognized default_output_resolution")')
+    call flush(6)
+    call MPI_Abort(geom%f_comm%communicator(),43,ierr)
+  end select
+
+  i = 0
+  file_idx = 0
+  do n = 1, numfiles
+    if (.not. rstflag(n)) cycle
+    file_idx = file_idx + 1
+    do k = 1, num_restart_vars(n)
+      i = i + 1
+      jedi_var_idx = FileType(n)%VariableIndecies(k)
+
+      tmp_names(i) = trim(fields(jedi_var_idx)%model_name)
+      tmp_d3(i)    = size(fields(jedi_var_idx)%array, 3)
+      tmp_nd(i)    = merge(3, 2, tmp_d3(i) > 1)
+      tmp_fid(i)   = file_idx
     end do
+  end do
 
-    ! Call the new direct arranger
-    call mpiioarg%arrange_direct(nn, tmp_names, tmp_d1, tmp_d2, tmp_d3, tmp_nd, tmp_vt, tmp_fid)
+  ! Call the new direct arranger
+  call distribute_io_work(npes, nn, tmp_names, tmp_d3, tmp_fid, &
+                          out_fileid, out_varname, out_lvlbegin, out_lvlend, nlev)
 
-    ! Fill metadata for Broadcast
-    ntotallev = sum(tmp_d3)
-    nlevpervar(1:nn) = tmp_d3
-    varnames(1:nn)   = tmp_names
-    nc_vartype(1:nn) = tmp_vt
+  mype_fileid  = out_fileid(spread_mype + 1)
+  mype_varname = out_varname(spread_mype + 1)
+  mype_vartype = var_type_tmp
+  mype_lbegin  = out_lvlbegin(spread_mype + 1)
+  mype_lend    = out_lvlend(spread_mype + 1)
 
-    ! Calculate nlev per rank
-    nlev(:) = 0
-    do r = 0, npes - 1
-      if (mpiioarg%lvlend(r+1) > 0) nlev(r) = mpiioarg%lvlend(r+1) - mpiioarg%lvlbegin(r+1) + 1
-    end do
+  ! Fill the global metadata arrays that everyone needs
+  ntotallev = sum(tmp_d3)
+  nlevpervar(1:nn) = tmp_d3
+  varnames(1:nn)   = tmp_names
+  nc_vartype(1:nn) = var_type_tmp
 
-    deallocate(tmp_names, tmp_d1, tmp_d2, tmp_d3, tmp_nd, tmp_vt, tmp_fid)
-  end if
+  ! Calculate nlev per rank
+  nlev(:) = 0
+  do r = 0, npes - 1
+    if (out_lvlend(r+1) > 0) nlev(r) = out_lvlend(r+1) - out_lvlbegin(r+1) + 1
+  end do
+
+  deallocate(tmp_names, tmp_d1, tmp_d2, tmp_d3, tmp_nd, tmp_vt, tmp_fid)
+  deallocate(out_fileid, out_varname, out_lvlbegin, out_lvlend)
 end if ! Output files do not exist
 
 deallocate(varlist)
 
-! Let all ranks know what is going on
-call MPI_Scatter(mpiioarg%fileid  ,  1,   mpi_integer, mype_fileid ,  1, mpi_integer  , 0, spread_comm,ierr)
-call MPI_Scatter(mpiioarg%varname , 72, mpi_character, mype_varname, 72, mpi_character, 0, spread_comm,ierr)
-call MPI_Scatter(mpiioarg%vartype ,  1,   mpi_integer, mype_vartype,  1, mpi_integer  , 0, spread_comm,ierr)
-call MPI_Scatter(mpiioarg%lvlbegin,  1,   mpi_integer, mype_lbegin ,  1, mpi_integer  , 0, spread_comm,ierr)
-call MPI_Scatter(mpiioarg%lvlend  ,  1,   mpi_integer, mype_lend   ,  1, mpi_integer  , 0, spread_comm,ierr)
-call mpiioarg%close()
-
-call MPI_Bcast(ntotallev    , 1, mpi_integer, 0, spread_comm,ierr)
-call MPI_Bcast(nlev(0)      , npes, mpi_integer, 0, spread_comm,ierr)
-call MPI_Bcast(nlevpervar(1), sum(numvarfile), mpi_integer, 0, spread_comm,ierr)
-call MPI_Bcast(varnames(1)  , 72*sum(numvarfile), mpi_character, 0, spread_comm,ierr)
-call MPI_Bcast(nc_vartype(1), sum(numvarfile), mpi_integer, 0, spread_comm,ierr)
 te = MPI_Wtime()
 call MPI_Reduce(te-tb, walltime(1), 1, MPI_DOUBLE_PRECISION, MPI_MAX, 0, geom%f_comm%communicator(), ierr)
 if (rank== 0) write(6,'(": Walltime setup0 ",F12.6)') walltime(1)
@@ -2081,42 +1972,7 @@ do b_start = 1, ntotallev, batch_size
 
   end do
 
-#ifdef DEBUG
-  allocate(MPI_Statuses(MPI_STATUS_SIZE, n_in_batch))
-  call MPI_Waitall(n_in_batch, reqs_p1, MPI_Statuses, ierr)
-
-  ! Check if any of the underlying batch requests failed
-  if (ierr == MPI_ERR_IN_STATUS) then
-
-    ! Loop through the active requests to isolate the failure
-    do req_idx = 1, n_in_batch
-      err_code = MPI_Statuses(MPI_ERROR, req_idx)
-
-      if (err_code /= MPI_SUCCESS) then
-        call MPI_Error_string(err_code, error_string, resultlen, dummy_ierr)
-
-        ! Print the exact request index and the error message
-        write(6, '("MPI_Waitall Error in Batch Loop! Request Index ", I0, " Failed: ", A)') &
-                  req_idx, error_string(1:resultlen)
-      endif
-    enddo
-
-    deallocate(MPI_Statuses)
-    call flush(6)
-    call MPI_Abort(geom%f_comm%communicator(), 99, dummy_ierr)
-
-    ! Catch any broader MPI failure not tied to a specific status
-  elseif (ierr /= MPI_SUCCESS) then
-    call MPI_Error_string(ierr, error_string, resultlen, dummy_ierr)
-    write(6, '("Fatal MPI_Waitall Error in Batch Loop: ", A)') error_string(1:resultlen)
-    deallocate(MPI_Statuses)
-    call flush(6)
-    call MPI_Abort(geom%f_comm%communicator(), 99, dummy_ierr)
-  endif
-  deallocate(MPI_Statuses)
-#else
   call MPI_Waitall(n_in_batch, reqs_p1, MPI_STATUSES_IGNORE, ierr)
-#endif
 
   ! POST ALL PHASE 2 REQUESTS
   ! -------------------------
@@ -2144,42 +2000,7 @@ do b_start = 1, ntotallev, batch_size
     endif
   end do
 
-#ifdef DEBUG
-  allocate(MPI_Statuses(MPI_STATUS_SIZE, n_in_batch))
-  call MPI_Waitall(n_in_batch, reqs_p2, MPI_Statuses, ierr)
-
-  ! Check if any of the underlying batch requests failed
-  if (ierr == MPI_ERR_IN_STATUS) then
-
-    ! Loop through the active requests to isolate the failure
-    do req_idx = 1, n_in_batch
-      err_code = MPI_Statuses(MPI_ERROR, req_idx)
-
-      if (err_code /= MPI_SUCCESS) then
-        call MPI_Error_string(err_code, error_string, resultlen, dummy_ierr)
-
-        ! Print the exact request index and the error message
-        write(6, '("MPI_Waitall Error in Batch Loop! Request Index ", I0, " Failed: ", A)') &
-                  req_idx, error_string(1:resultlen)
-      endif
-    enddo
-
-    deallocate(MPI_Statuses)
-    call flush(6)
-    call MPI_Abort(geom%f_comm%communicator(), 99, dummy_ierr)
-
-  ! Catch any broader MPI failure not tied to a specific status
-  elseif (ierr /= MPI_SUCCESS) then
-      call MPI_Error_string(ierr, error_string, resultlen, dummy_ierr)
-      write(6, '("Fatal MPI_Waitall Error in Batch Loop: ", A)') error_string(1:resultlen)
-      deallocate(MPI_Statuses)
-      call flush(6)
-      call MPI_Abort(geom%f_comm%communicator(), 99, dummy_ierr)
-  endif
-  deallocate(MPI_Statuses)
-#else
   call MPI_Waitall(n_in_batch, reqs_p2, MPI_STATUSES_IGNORE, ierr)
-#endif
 end do ! Outer batch loop
 te = MPI_Wtime()
 call MPI_Reduce(te-tb, walltime(3), 1, MPI_DOUBLE_PRECISION, MPI_MAX, 0, geom%f_comm%communicator(), ierr)
@@ -2482,6 +2303,123 @@ if (mpp_pe() == mpp_root_pe() .and. .not. self%skip_coupler) then
    write( 101, '(6i6,8x,a)') date, 'Current model time: year, month, day, hour, minute, second'
    close(101)
 endif
+
+contains
+
+subroutine distribute_io_work(npes, total_vars, var_names_in, var_nz_in, var_fileid_in, &
+                                out_fileid, out_varname, out_lvlbegin, out_lvlend, out_nlev)
+    implicit none
+
+    ! --- Inputs ---
+    integer, intent(in) :: npes, total_vars
+    character(len=*), intent(in) :: var_names_in(total_vars)
+    integer, intent(in) :: var_nz_in(total_vars)
+    integer, intent(in) :: var_fileid_in(total_vars)
+
+    ! --- Outputs ---
+    ! Sized exactly to the number of MPI ranks (1 to npes)
+    integer, intent(out) :: out_fileid(npes)
+    character(len=72), intent(out) :: out_varname(npes)
+    integer, intent(out) :: out_lvlbegin(npes)
+    integer, intent(out) :: out_lvlend(npes)
+    integer, intent(out) :: out_nlev(0:npes-1)
+
+    ! --- Locals ---
+    integer :: nlvl2d, nlvl3d, nlvl3d_small, nlvlcore
+    integer, allocatable :: nlvl3d_list(:)
+    integer :: i, k, nn, n3d, nz, mynlvl3d
+
+    ! Initialize outputs to handle ranks that receive no work
+    out_fileid = 0
+    out_varname = ""
+    out_lvlbegin = 0
+    out_lvlend = 0
+    out_nlev = 0
+
+    ! 1. Count levels and categorize variables
+    nlvl2d = 0; nlvl3d = 0; nlvl3d_small = 0
+    do i = 1, total_vars
+      if (var_nz_in(i) > 1) then
+        if (var_nz_in(i) <= 10) then
+          nlvl3d_small = nlvl3d_small + var_nz_in(i)
+        else
+          nlvl3d = nlvl3d + 1
+        endif
+      else
+        nlvl2d = nlvl2d + 1
+      endif
+    enddo
+
+    ! 2. Calculate cores per large 3D field
+    if (nlvl3d > 0) then
+      allocate(nlvl3d_list(nlvl3d))
+      nlvlcore = (npes - nlvl2d - nlvl3d_small) / nlvl3d
+      nlvl3d_list = nlvlcore
+      nlvlcore = (npes - nlvl2d - nlvl3d_small) - (nlvl3d * nlvlcore)
+      if (nlvlcore > 0) then
+        do k = 1, nlvlcore
+          nlvl3d_list(k) = nlvl3d_list(k) + 1
+        enddo
+      endif
+    endif
+
+    ! 3. Assign levels to ranks
+    nn = 0; n3d = 0
+    do i = 1, total_vars
+      nz = var_nz_in(i)
+      if (nz > 10) then
+        ! Distributed large 3D field
+        n3d = n3d + 1
+        mynlvl3d = min(nlvl3d_list(n3d), nz)
+        nlvlcore = nz / mynlvl3d
+
+        do k = 1, mynlvl3d
+          nn = nn + 1
+          if (nn > npes) exit
+
+          out_varname(nn) = trim(var_names_in(i))
+          out_fileid(nn)  = var_fileid_in(i)
+
+          if (k == 1) then
+            out_lvlbegin(nn) = 1
+          else
+            out_lvlbegin(nn) = out_lvlend(nn-1) + 1
+          endif
+
+          out_lvlend(nn) = out_lvlbegin(nn) + nlvlcore - 1
+          if (k <= (nz - nlvlcore * mynlvl3d)) out_lvlend(nn) = out_lvlend(nn) + 1
+        enddo
+      else
+        ! 2D field or small 3D field (assigned 1 level per rank)
+        do k = 1, nz
+          nn = nn + 1
+          if (nn > npes) exit
+          out_varname(nn) = trim(var_names_in(i))
+          out_fileid(nn)  = var_fileid_in(i)
+          out_lvlbegin(nn) = k
+          out_lvlend(nn)   = k
+        enddo
+      endif
+    enddo
+
+    ! 4. Calculate final array of level counts assigned to each rank (0-indexed for JEDI standard)
+    do k = 1, npes
+      if (out_lvlend(k) > 0 .and. out_lvlbegin(k) > 0) then
+        out_nlev(k-1) = out_lvlend(k) - out_lvlbegin(k) + 1
+      endif
+    enddo
+
+    if(rank==0) then
+      write(6,'(2a5,2x,a45,2a10)') "core","fid","varname","lvlbegin","lvlend"
+      do k=1,npes
+         write(6,'(2I5,2x,a45,2I10)') k,out_fileid(k),trim(out_varname(k)),out_lvlbegin(k),out_lvlend(k)
+      enddo
+      write(6,*) "======================================================================="
+    endif
+
+    if (allocated(nlvl3d_list)) deallocate(nlvl3d_list)
+
+  end subroutine distribute_io_work
 
 end subroutine write_restart_all_reg
 
