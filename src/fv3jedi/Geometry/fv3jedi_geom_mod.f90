@@ -277,6 +277,7 @@ npz = self%npz
 
 self%layout(1) = Atm(1)%layout(1)
 self%layout(2) = Atm(1)%layout(2)
+
 self%io_layout(1) = Atm(1)%io_layout(1)
 self%io_layout(2) = Atm(1)%io_layout(2)
 
@@ -329,8 +330,8 @@ mpicomm = self%f_comm%communicator()
 call MPI_Comm_rank(mpicomm, wrank, ierr)
 call MPI_Comm_size(mpicomm, wsize, ierr)
 
-self%NSindex = modulo(wrank, self%layout(1))
-self%EWindex = wrank / self%layout(1)
+self%EWindex = modulo(wrank,self%layout(1))
+self%NSindex = (wrank/self%layout(1))
 
 call MPI_Comm_split(mpicomm, self%NSindex, wrank, self%rowComm, ierr)
 if (ierr /= MPI_SUCCESS) call mpp_error(FATAL, "MPI_Comm_split rowComm failed")
@@ -347,10 +348,10 @@ call MPI_Comm_size(self%colComm, colSize, ierr)
 allocate(self%ibegin(0:colSize-1), self%iend(0:colSize-1))
 allocate(self%jbegin(0:rowSize-1), self%jend(0:rowSize-1))
 
-call MPI_AllGather(self%isc,1,MPI_Integer,self%ibegin(0:),1,MPI_Integer, self%colComm, ierr)
-call MPI_AllGather(self%iec,1,MPI_Integer,self%iend(0:)  ,1,MPI_Integer, self%colComm, ierr)
-call MPI_AllGather(self%jsc,1,MPI_Integer,self%jbegin(0:),1,MPI_Integer, self%rowComm, ierr)
-call MPI_AllGather(self%jec,1,MPI_Integer,self%jend(0:)  ,1,MPI_Integer, self%rowComm, ierr)
+call MPI_AllGather(self%isc,1,MPI_Integer,self%ibegin(0:),1,MPI_Integer, self%rowComm, ierr)
+call MPI_AllGather(self%iec,1,MPI_Integer,self%iend(0:)  ,1,MPI_Integer, self%rowComm, ierr)
+call MPI_AllGather(self%jsc,1,MPI_Integer,self%jbegin(0:),1,MPI_Integer, self%colComm, ierr)
+call MPI_AllGather(self%jec,1,MPI_Integer,self%jend(0:)  ,1,MPI_Integer, self%colComm, ierr)
 
 ! Let other ranks know my row and column index
 allocate(self%MyRowGlobal(0:wsize-1), self%MyColGlobal(0:wsize-1))
@@ -366,18 +367,18 @@ self%MyRankInRowComm=-999; self%MyRankInColComm=-999
 call MPI_AllGather(self%rowrank,1,MPI_Integer,self%MyRankInRowComm,1,MPI_Integer, mpicomm, ierr)
 call MPI_AllGather(self%colrank,1,MPI_Integer,self%MyRankInColComm,1,MPI_Integer, mpicomm, ierr)
 
+! dimensions of my subdomain
+call MPI_Comm_rank(self%rowComm, myRowRank, ierr)  ! 0..rowSize-1
+call MPI_Comm_rank(self%colComm, myColRank, ierr)  ! 0..colSize-1
+self%localsizes(1) = self%iend(myRowRank) - self%ibegin(myRowRank) + 1
+self%localsizes(2) = self%jend(myColRank) - self%jbegin(myColRank) + 1
+
 ! Let other ranks in my row and column know how many rows and columns I have in my subdomain
 allocate(self%NumColsPerRank(0:rowSize-1))
 allocate(self%NumRowsPerRank(0:colSize-1))
 self%NumColsPerRank=-999; self%NumRowsPerRank=-999
-
-call MPI_Comm_rank(self%rowComm, myRowRank, ierr)  ! 0..rowSize-1
-call MPI_Comm_rank(self%colComm, myColRank, ierr)  ! 0..colSize-1
-self%localsizes(1) = self%iend(myColRank) - self%ibegin(myColRank) + 1
-self%localsizes(2) = self%jend(myRowRank) - self%jbegin(myRowRank) + 1
-
-call MPI_Allgather(self%localsizes(2), 1, MPI_Integer, self%NumColsPerRank, 1, MPI_Integer, self%rowComm, ierr)
-call MPI_Allgather(self%localsizes(1), 1, MPI_Integer, self%NumRowsPerRank, 1, MPI_Integer, self%colComm, ierr)
+call MPI_Allgather(self%localsizes(1), 1, MPI_Integer, self%NumColsPerRank, 1, MPI_Integer, self%rowComm, ierr)
+call MPI_Allgather(self%localsizes(2), 1, MPI_Integer, self%NumRowsPerRank, 1, MPI_Integer, self%colComm, ierr)
 
 ! Horizontal dimensions of ensemble input files
 self%globalsizes(1) = self%npx-1
