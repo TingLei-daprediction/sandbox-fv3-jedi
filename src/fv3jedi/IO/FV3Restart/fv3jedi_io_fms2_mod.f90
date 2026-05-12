@@ -57,13 +57,13 @@ integer :: read_comm, write_comm
 ! MPI_Info
 integer :: info
 
-! spread_comm communicatio is used to distribute reads to all nodes in the job
+! spread_comm communicator is used to distribute reads to all nodes in the job
 integer :: node_comm, spread_comm, node_count
 integer :: local_rank, spread_mype, is_node_leader, total_nodes, batch_size
 integer, allocatable :: spread_to_world(:)
 integer, allocatable :: reqs_p1(:), reqs_p2(:)
 
-integer :: my_var_index=-999
+integer :: my_var_index
 integer :: ntotallev
 integer :: mype_lbegin,mype_lend
 integer :: mype_vartype
@@ -632,7 +632,6 @@ end subroutine read_restart_fields
 
 subroutine read_restart_fields_reg(self, geom, fields, field_io_names, field_io_scaling)
 use module_ncfile_stat, only : ncfile_stat
-use module_mpi_arrange, only : mpi_io_arrange
 use TwoPhaseScatterGather
 use netcdf
 use, intrinsic :: ieee_arithmetic
@@ -648,7 +647,7 @@ type(fckit_configuration), intent(in)    :: field_io_scaling
 integer :: num_restart_vars(numfiles)
 character(len=500)  :: tmpvarlist(numfiles)
 character(len=500), allocatable  :: varlist(:)
-integer :: i, j, level, l, n, indexrst, var, file_var_idx, jedi_var_idx
+integer :: i, j, k, level, l, n, indexrst, var, file_var_idx, jedi_var_idx
 integer :: iret,ilev,r,ncioid,var_id,loc
 
 integer(kind=4), allocatable :: nlev(:), nlevpervar(:), numvar(:)
@@ -660,7 +659,11 @@ integer(kind=8) :: mold8(1), chksum_i8
 character(len=32) :: chksum
 
 type(ncfile_stat) :: ncfs_all
-type(mpi_io_arrange) :: mpiioarg
+
+integer, allocatable :: out_fileid(:), out_lvlbegin(:), out_lvlend(:)
+character(len=72), allocatable :: out_varname(:)
+character(len=72), allocatable :: tmp_names(:)
+integer, allocatable :: tmp_d3(:), tmp_fid(:)
 
 ! sub communicator
 integer :: color, key
@@ -882,20 +885,35 @@ if( (fields_changed) .or. &
   allocate(nc_vartype(sum(numvar)))
 
   ! init on all ranks to avoid passing unallocated allocatable to MPI_Scatter
-  call mpiioarg%init(npes)
+  allocate(out_fileid(npes), out_varname(npes), out_lvlbegin(npes), out_lvlend(npes))
 
   if(spread_mype==0) then
     ! find dimension of each field
     call ncfs_all%init(totalnumfiles, FileNamesToProcess, numvar, varlist)
     call ncfs_all%fill_dims()
 
-    ! distibute variables to each core
-    call mpiioarg%arrange(ncfs_all)
+    allocate(tmp_names(ncfs_all%numvar), tmp_d3(ncfs_all%numvar), tmp_fid(ncfs_all%numvar))
 
+    ! Extract variables from NetCDF metadata
+    tmp_names(:) = ncfs_all%list_varname(1:ncfs_all%numvar)
+    tmp_d3(:)    = ncfs_all%dim_3(1:ncfs_all%numvar)
+
+    ! Build the file ID map (which variables belong to which file index)
+    i = 0
+    do n = 1, ncfs_all%numfiles
+      do k = 1, ncfs_all%numvarfile(n)
+        i = i + 1
+        tmp_fid(i) = n
+      enddo
+    enddo
+
+    ! distibute variables to each core
+    call distribute_io_work(npes, ncfs_all%numvar, tmp_names, tmp_d3, tmp_fid, &
+                            out_fileid, out_varname, out_lvlbegin, out_lvlend, nlev)
     nlev(:)=0
     do i=0,npes-1
-      if( (mpiioarg%lvlend(i+1) > 0) .and. (mpiioarg%lvlbegin(i+1) > 0) ) then
-        nlev(i) = (mpiioarg%lvlend(i+1) - mpiioarg%lvlbegin(i+1) + 1)
+      if( (out_lvlend(i+1) > 0) .and. (out_lvlbegin(i+1) > 0) ) then
+        nlev(i) = (out_lvlend(i+1) - out_lvlbegin(i+1) + 1)
       endif
     enddo
     ntotallev = sum(ncfs_all%dim_3)
@@ -903,24 +921,34 @@ if( (fields_changed) .or. &
     nlevpervar(:ncfs_all%numvar) = ncfs_all%dim_3(:)
     varnames(:ncfs_all%numvar) = ncfs_all%list_varname(:)  ! Names of vcariables to be processed
     nc_vartype(:ncfs_all%numvar) = ncfs_all%vartype(:)        ! NetCDF type of each variable
+    deallocate(tmp_names, tmp_d3, tmp_fid)
     call ncfs_all%close()
   endif
 
   deallocate(varlist)
 
   ! Let all ranks know what is going on
-  call MPI_Scatter(mpiioarg%fileid  ,  1,   mpi_integer, mype_fileid ,  1, mpi_integer  , 0, spread_comm,ierr)
-  call MPI_Scatter(mpiioarg%varname , 72, mpi_character, mype_varname, 72, mpi_character, 0, spread_comm,ierr)
-  call MPI_Scatter(mpiioarg%vartype ,  1,   mpi_integer, mype_vartype,  1, mpi_integer  , 0, spread_comm,ierr)
-  call MPI_Scatter(mpiioarg%lvlbegin,  1,   mpi_integer, mype_lbegin ,  1, mpi_integer  , 0, spread_comm,ierr)
-  call MPI_Scatter(mpiioarg%lvlend  ,  1,   mpi_integer, mype_lend   ,  1, mpi_integer  , 0, spread_comm,ierr)
-  call mpiioarg%close()
+  call MPI_Scatter(out_fileid  ,  1,   mpi_integer, mype_fileid ,  1, mpi_integer  , 0, spread_comm,ierr)
+  call MPI_Scatter(out_varname , 72, mpi_character, mype_varname, 72, mpi_character, 0, spread_comm,ierr)
+  call MPI_Scatter(out_lvlbegin,  1,   mpi_integer, mype_lbegin ,  1, mpi_integer  , 0, spread_comm,ierr)
+  call MPI_Scatter(out_lvlend  ,  1,   mpi_integer, mype_lend   ,  1, mpi_integer  , 0, spread_comm,ierr)
+  deallocate(out_fileid, out_varname, out_lvlbegin, out_lvlend)
 
   call MPI_Bcast(ntotallev, 1, mpi_integer, 0, spread_comm,ierr)
   call MPI_Bcast(nlev, npes, mpi_integer, 0, spread_comm,ierr)
   call MPI_Bcast(nlevpervar, sum(numvar), mpi_integer, 0, spread_comm,ierr)
   call MPI_Bcast(varnames, 72*sum(numvar), mpi_character, 0, spread_comm,ierr)
   call MPI_Bcast(nc_vartype, sum(numvar), mpi_integer, 0, spread_comm,ierr)
+
+  ! Find this rank's assigned vartype by matching the assigned varname
+
+  mype_vartype = -1
+  do i = 1, sum(numvar)
+    if (trim(varnames(i)) == trim(adjustl(mype_varname))) then
+      mype_vartype = nc_vartype(i)
+      exit
+    endif
+  enddo
 
   ! Map field level to the process handling that level
   ! LevelToProcMap(levelIndex) gives the rank
@@ -1380,7 +1408,6 @@ end subroutine write_restart_all
 
 subroutine write_restart_all_reg(self, geom, fields, vdate, field_io_names, field_io_scaling)
 use module_ncfile_stat, only : ncfile_stat
-use module_mpi_arrange, only : mpi_io_arrange
 use TwoPhaseScatterGather
 use, intrinsic :: ieee_arithmetic
 use, intrinsic :: iso_c_binding
@@ -1419,7 +1446,6 @@ end type
 type(write_buffer_t), allocatable, target, asynchronous :: write_buffers(:)
 
 type(ncfile_stat) :: ncfs_all
-type(mpi_io_arrange) :: mpiioarg
 
 ! sub communicator
 integer :: color, key
@@ -1706,27 +1732,42 @@ allocate(varnames(sum(numvarfile)))
 if(allocated(nc_vartype)) deallocate(nc_vartype)
 allocate(nc_vartype(sum(numvarfile)))
 
-! init on all ranks to avoid passing unallocated allocatable to MPI_Scatter
-call mpiioarg%init(npes)
-
 if(allocated(nlev)) deallocate(nlev)
 allocate(nlev(0:npes-1))
 
 ! Scan the supplied output files to determine variable type, number of levels then
 ! distribute the load evenly among the available nodes/ranks
 if(all(file_exists(1:totalnumfiles) == .true.)) then
+  ! init on all ranks to avoid passing unallocated allocatable to MPI_Scatter
+  allocate(out_fileid(npes), out_varname(npes), out_lvlbegin(npes), out_lvlend(npes))
   if (spread_mype == 0) then
     call ncfs_all%init(totalnumfiles, FileNamesToProcess, numvarfile, varlist)
     call ncfs_all%fill_dims()
 !
 !  distibute variables to each core
 !
-    call mpiioarg%arrange(ncfs_all)
+    !call mpiioarg%arrange(ncfs_all)
+    allocate(tmp_names(ncfs_all%numvar), tmp_d3(ncfs_all%numvar), tmp_fid(ncfs_all%numvar))
 
+    ! Extract variables from NetCDF metadata
+    tmp_names = ncfs_all%list_varname(1:ncfs_all%numvar)
+    tmp_d3    = ncfs_all%dim_3(1:ncfs_all%numvar)
+
+    ! Build the file ID map (which variables belong to which file index)
+    i = 0
+    do n = 1, ncfs_all%numfiles
+      do k = 1, ncfs_all%numvarfile(n)
+        i = i + 1
+        tmp_fid(i) = n
+      enddo
+    enddo
+
+    call distribute_io_work(npes, ncfs_all%numvar, tmp_names, tmp_d3, tmp_fid, &
+                            out_fileid, out_varname, out_lvlbegin, out_lvlend, nlev)
     nlev(:)=0
     do i=0,npes-1
-      if( (mpiioarg%lvlend(i+1) > 0) .and. (mpiioarg%lvlbegin(i+1) > 0) ) then
-        nlev(i) = (mpiioarg%lvlend(i+1) - mpiioarg%lvlbegin(i+1) + 1)
+      if( (out_lvlend(i+1) > 0) .and. (out_lvlbegin(i+1) > 0) ) then
+        nlev(i) = (out_lvlend(i+1) - out_lvlbegin(i+1) + 1)
       endif
     enddo
     ntotallev = sum(ncfs_all%dim_3)
@@ -1735,16 +1776,17 @@ if(all(file_exists(1:totalnumfiles) == .true.)) then
     varnames(:) = ncfs_all%list_varname(:)  ! Names of variables to be processed
     nc_vartype(:) = ncfs_all%vartype(:)        ! NetCDF type of each variable
     numvarfile(:) = ncfs_all%numvarfile(:)  ! Number of variables in each file
+
+    deallocate(tmp_names, tmp_d3, tmp_fid)
     call ncfs_all%close()
   end if
 
   ! Let all ranks know what is going on
-  call MPI_Scatter(mpiioarg%fileid  ,  1,   mpi_integer, mype_fileid ,  1, mpi_integer  , 0, spread_comm,ierr)
-  call MPI_Scatter(mpiioarg%varname , 72, mpi_character, mype_varname, 72, mpi_character, 0, spread_comm,ierr)
-  call MPI_Scatter(mpiioarg%vartype ,  1,   mpi_integer, mype_vartype,  1, mpi_integer  , 0, spread_comm,ierr)
-  call MPI_Scatter(mpiioarg%lvlbegin,  1,   mpi_integer, mype_lbegin ,  1, mpi_integer  , 0, spread_comm,ierr)
-  call MPI_Scatter(mpiioarg%lvlend  ,  1,   mpi_integer, mype_lend   ,  1, mpi_integer  , 0, spread_comm,ierr)
-  call mpiioarg%close()
+  call MPI_Scatter(out_fileid  ,  1,   mpi_integer, mype_fileid ,  1, mpi_integer  , 0, spread_comm,ierr)
+  call MPI_Scatter(out_varname , 72, mpi_character, mype_varname, 72, mpi_character, 0, spread_comm,ierr)
+  call MPI_Scatter(out_lvlbegin,  1,   mpi_integer, mype_lbegin ,  1, mpi_integer  , 0, spread_comm,ierr)
+  call MPI_Scatter(out_lvlend  ,  1,   mpi_integer, mype_lend   ,  1, mpi_integer  , 0, spread_comm,ierr)
+  deallocate(out_fileid, out_varname, out_lvlbegin, out_lvlend)
 
   call MPI_Bcast(ntotallev    , 1, mpi_integer, 0, spread_comm,ierr)
   call MPI_Bcast(nlev(0)      , npes, mpi_integer, 0, spread_comm,ierr)
@@ -2304,123 +2346,6 @@ if (mpp_pe() == mpp_root_pe() .and. .not. self%skip_coupler) then
    close(101)
 endif
 
-contains
-
-subroutine distribute_io_work(npes, total_vars, var_names_in, var_nz_in, var_fileid_in, &
-                                out_fileid, out_varname, out_lvlbegin, out_lvlend, out_nlev)
-    implicit none
-
-    ! --- Inputs ---
-    integer, intent(in) :: npes, total_vars
-    character(len=*), intent(in) :: var_names_in(total_vars)
-    integer, intent(in) :: var_nz_in(total_vars)
-    integer, intent(in) :: var_fileid_in(total_vars)
-
-    ! --- Outputs ---
-    ! Sized exactly to the number of MPI ranks (1 to npes)
-    integer, intent(out) :: out_fileid(npes)
-    character(len=72), intent(out) :: out_varname(npes)
-    integer, intent(out) :: out_lvlbegin(npes)
-    integer, intent(out) :: out_lvlend(npes)
-    integer, intent(out) :: out_nlev(0:npes-1)
-
-    ! --- Locals ---
-    integer :: nlvl2d, nlvl3d, nlvl3d_small, nlvlcore
-    integer, allocatable :: nlvl3d_list(:)
-    integer :: i, k, nn, n3d, nz, mynlvl3d
-
-    ! Initialize outputs to handle ranks that receive no work
-    out_fileid = 0
-    out_varname = ""
-    out_lvlbegin = 0
-    out_lvlend = 0
-    out_nlev = 0
-
-    ! 1. Count levels and categorize variables
-    nlvl2d = 0; nlvl3d = 0; nlvl3d_small = 0
-    do i = 1, total_vars
-      if (var_nz_in(i) > 1) then
-        if (var_nz_in(i) <= 10) then
-          nlvl3d_small = nlvl3d_small + var_nz_in(i)
-        else
-          nlvl3d = nlvl3d + 1
-        endif
-      else
-        nlvl2d = nlvl2d + 1
-      endif
-    enddo
-
-    ! 2. Calculate cores per large 3D field
-    if (nlvl3d > 0) then
-      allocate(nlvl3d_list(nlvl3d))
-      nlvlcore = (npes - nlvl2d - nlvl3d_small) / nlvl3d
-      nlvl3d_list = nlvlcore
-      nlvlcore = (npes - nlvl2d - nlvl3d_small) - (nlvl3d * nlvlcore)
-      if (nlvlcore > 0) then
-        do k = 1, nlvlcore
-          nlvl3d_list(k) = nlvl3d_list(k) + 1
-        enddo
-      endif
-    endif
-
-    ! 3. Assign levels to ranks
-    nn = 0; n3d = 0
-    do i = 1, total_vars
-      nz = var_nz_in(i)
-      if (nz > 10) then
-        ! Distributed large 3D field
-        n3d = n3d + 1
-        mynlvl3d = min(nlvl3d_list(n3d), nz)
-        nlvlcore = nz / mynlvl3d
-
-        do k = 1, mynlvl3d
-          nn = nn + 1
-          if (nn > npes) exit
-
-          out_varname(nn) = trim(var_names_in(i))
-          out_fileid(nn)  = var_fileid_in(i)
-
-          if (k == 1) then
-            out_lvlbegin(nn) = 1
-          else
-            out_lvlbegin(nn) = out_lvlend(nn-1) + 1
-          endif
-
-          out_lvlend(nn) = out_lvlbegin(nn) + nlvlcore - 1
-          if (k <= (nz - nlvlcore * mynlvl3d)) out_lvlend(nn) = out_lvlend(nn) + 1
-        enddo
-      else
-        ! 2D field or small 3D field (assigned 1 level per rank)
-        do k = 1, nz
-          nn = nn + 1
-          if (nn > npes) exit
-          out_varname(nn) = trim(var_names_in(i))
-          out_fileid(nn)  = var_fileid_in(i)
-          out_lvlbegin(nn) = k
-          out_lvlend(nn)   = k
-        enddo
-      endif
-    enddo
-
-    ! 4. Calculate final array of level counts assigned to each rank (0-indexed for JEDI standard)
-    do k = 1, npes
-      if (out_lvlend(k) > 0 .and. out_lvlbegin(k) > 0) then
-        out_nlev(k-1) = out_lvlend(k) - out_lvlbegin(k) + 1
-      endif
-    enddo
-
-    if(rank==0) then
-      write(6,'(2a5,2x,a45,2a10)') "core","fid","varname","lvlbegin","lvlend"
-      do k=1,npes
-         write(6,'(2I5,2x,a45,2I10)') k,out_fileid(k),trim(out_varname(k)),out_lvlbegin(k),out_lvlend(k)
-      enddo
-      write(6,*) "======================================================================="
-    endif
-
-    if (allocated(nlvl3d_list)) deallocate(nlvl3d_list)
-
-  end subroutine distribute_io_work
-
 end subroutine write_restart_all_reg
 
 ! --------------------------------------------------------------------------------------------------
@@ -2748,5 +2673,120 @@ end subroutine dummy_final
       call MPI_Abort(MPI_COMM_WORLD,2,ierr)
     end if
   end subroutine check
+
+  subroutine distribute_io_work(npes, total_vars, var_names_in, var_nz_in, var_fileid_in, &
+                                out_fileid, out_varname, out_lvlbegin, out_lvlend, out_nlev)
+    implicit none
+
+    ! --- Inputs ---
+    integer, intent(in) :: npes, total_vars
+    character(len=*), intent(in) :: var_names_in(total_vars)
+    integer, intent(in) :: var_nz_in(total_vars)
+    integer, intent(in) :: var_fileid_in(total_vars)
+
+    ! --- Outputs ---
+    ! Sized exactly to the number of MPI ranks (1 to npes)
+    integer, intent(out) :: out_fileid(npes)
+    character(len=72), intent(out) :: out_varname(npes)
+    integer, intent(out) :: out_lvlbegin(npes)
+    integer, intent(out) :: out_lvlend(npes)
+    integer, intent(out) :: out_nlev(0:npes-1)
+
+    ! --- Locals ---
+    integer :: nlvl2d, nlvl3d, nlvl3d_small, nlvlcore
+    integer, allocatable :: nlvl3d_list(:)
+    integer :: i, k, nn, n3d, nz, mynlvl3d
+
+    ! Initialize outputs to handle ranks that receive no work
+    out_fileid = 0
+    out_varname = ""
+    out_lvlbegin = 0
+    out_lvlend = 0
+    out_nlev = 0
+
+    ! 1. Count levels and categorize variables
+    nlvl2d = 0; nlvl3d = 0; nlvl3d_small = 0
+    do i = 1, total_vars
+      if (var_nz_in(i) > 1) then
+        if (var_nz_in(i) <= 10) then
+          nlvl3d_small = nlvl3d_small + var_nz_in(i)
+        else
+          nlvl3d = nlvl3d + 1
+        endif
+      else
+        nlvl2d = nlvl2d + 1
+      endif
+    enddo
+
+    ! 2. Calculate cores per large 3D field
+    if (nlvl3d > 0) then
+      allocate(nlvl3d_list(nlvl3d))
+      nlvlcore = (npes - nlvl2d - nlvl3d_small) / nlvl3d
+      nlvl3d_list = nlvlcore
+      nlvlcore = (npes - nlvl2d - nlvl3d_small) - (nlvl3d * nlvlcore)
+      if (nlvlcore > 0) then
+        do k = 1, nlvlcore
+          nlvl3d_list(k) = nlvl3d_list(k) + 1
+        enddo
+      endif
+    endif
+
+    ! 3. Assign levels to ranks
+    nn = 0; n3d = 0
+    do i = 1, total_vars
+      nz = var_nz_in(i)
+      if (nz > 10) then
+        ! Distributed large 3D field
+        n3d = n3d + 1
+        mynlvl3d = min(nlvl3d_list(n3d), nz)
+        nlvlcore = nz / mynlvl3d
+
+        do k = 1, mynlvl3d
+          nn = nn + 1
+          if (nn > npes) exit
+
+          out_varname(nn) = trim(var_names_in(i))
+          out_fileid(nn)  = var_fileid_in(i)
+
+          if (k == 1) then
+            out_lvlbegin(nn) = 1
+          else
+            out_lvlbegin(nn) = out_lvlend(nn-1) + 1
+          endif
+
+          out_lvlend(nn) = out_lvlbegin(nn) + nlvlcore - 1
+          if (k <= (nz - nlvlcore * mynlvl3d)) out_lvlend(nn) = out_lvlend(nn) + 1
+        enddo
+      else
+        ! 2D field or small 3D field (assigned 1 level per rank)
+        do k = 1, nz
+          nn = nn + 1
+          if (nn > npes) exit
+          out_varname(nn) = trim(var_names_in(i))
+          out_fileid(nn)  = var_fileid_in(i)
+          out_lvlbegin(nn) = k
+          out_lvlend(nn)   = k
+        enddo
+      endif
+    enddo
+
+    ! 4. Calculate final array of level counts assigned to each rank (0-indexed for JEDI standard)
+    do k = 1, npes
+      if (out_lvlend(k) > 0 .and. out_lvlbegin(k) > 0) then
+        out_nlev(k-1) = out_lvlend(k) - out_lvlbegin(k) + 1
+      endif
+    enddo
+
+    !if(rank==0) then
+    !  write(6,'(2a5,2x,a45,2a10)') "core","fid","varname","lvlbegin","lvlend"
+    !  do k=1,npes
+    !     write(6,'(2I5,2x,a45,2I10)') k,out_fileid(k),trim(out_varname(k)),out_lvlbegin(k),out_lvlend(k)
+    !  enddo
+    !  write(6,*) "======================================================================="
+    !endif
+
+    if (allocated(nlvl3d_list)) deallocate(nlvl3d_list)
+
+  end subroutine distribute_io_work
 
 end module fv3jedi_io_fms_mod
