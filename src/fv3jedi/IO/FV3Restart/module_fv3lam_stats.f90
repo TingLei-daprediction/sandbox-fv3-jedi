@@ -35,7 +35,7 @@ module module_ncfile_stat
   type :: ncfile_stat
 
       integer :: numfiles
-      character(len=120),allocatable :: filename(:)
+      character(len=256),allocatable :: filename(:)
       integer,allocatable :: numvarfile(:)
       integer :: numvar
       character(len=max_varname_length),allocatable :: list_varname(:)

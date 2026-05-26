@@ -85,11 +85,11 @@ type fv3jedi_io_fms
  logical :: is_restart
  logical :: regional_restart
  logical :: input_is_date_templated
- character(len=128) :: datapath
- character(len=128) :: filename_nonrestart ! For non-restarts
- character(len=128) :: filename_nonrestart_conf
- character(len=128) :: filenames(numfiles) ! For restarts
- character(len=128) :: filenames_conf(numfiles)
+ character(len=256) :: datapath
+ character(len=256) :: filename_nonrestart ! For non-restarts
+ character(len=256) :: filename_nonrestart_conf
+ character(len=256) :: filenames(numfiles) ! For restarts
+ character(len=256) :: filenames_conf(numfiles)
  integer :: index_core = 1  ! Files like fv_core.res.tile<n>.nc
  integer :: index_trcr = 2  ! Files like fv_tracer.res.tile<n>.nc
  integer :: index_sfcd = 3  ! Files like sfc_data.tile<n>.nc
@@ -103,7 +103,7 @@ type fv3jedi_io_fms
  logical :: skip_coupler
  logical :: prepend_date
  logical :: has_prefix
- character(len=128) :: prefix
+ character(len=256) :: prefix
  integer :: calendar_type
  logical :: ignore_checksum
  logical :: write_into_existing_files
@@ -155,8 +155,8 @@ call conf%get_or_die("regional restart", self%regional_restart)
 ! Get path to files
 ! -----------------
 call conf%get_or_die("datapath",str)
-if (len(str) > 128) &
-  call abor1_ftn('fv3jedi_io_fms_mod.create: datapath too long, max FMS char length= 128')
+if (len(str) > 256) &
+  call abor1_ftn('fv3jedi_io_fms_mod.create: datapath too long, max FMS char length= 256')
 
 ! For ensemble methods switch out member template
 ! -----------------------------------------------
@@ -216,8 +216,8 @@ if ( self%is_restart ) then
       ! Retrieve user input filenames if available
       if (conf%has(fileconf(n))) then
          call conf%get_or_die(fileconf(n),str)
-         if (len(str) > 128) call abor1_ftn("fv3jedi_io_fms_mod.create: "//fileconf(n)//&
-                                            " too long, max FMS char length= 128")
+         if (len(str) > 256) call abor1_ftn("fv3jedi_io_fms_mod.create: "//fileconf(n)//&
+                                            " too long, max FMS char length= 256")
          call add_iteration(conf,str)
          self%filenames_conf(n) = str
          deallocate(str)
@@ -305,8 +305,8 @@ else
    ! --------
    if ( conf%has("filename_nonrestart") ) then
       call conf%get_or_die("filename_nonrestart", str)
-      if (len(str) > 128) then
-         call abor1_ftn('fv3jedi_io_fms_mod.create: filename_nonrestart too long, max FMS char length= 128')
+      if (len(str) > 256) then
+         call abor1_ftn('fv3jedi_io_fms_mod.create: filename_nonrestart too long, max FMS char length= 256')
       end if
       self%filename_nonrestart_conf = str
       deallocate(str)
