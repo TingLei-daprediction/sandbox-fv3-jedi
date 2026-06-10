@@ -178,6 +178,7 @@ void State::changeResolution(const State & other) {
   // Interpolate atlas::FieldSet representation of fv3 data
   other.toFieldSet(source);
   interp.apply(source, target);
+  target.haloExchange();
   this->fromFieldSet(target);
 }
 
