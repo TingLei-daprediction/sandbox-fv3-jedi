@@ -82,6 +82,7 @@ class Geometry : public util::Printable,
   const int & npx() const {return npx_;}
   const int & npy() const {return npy_;}
   const int & npz() const {return npz_;}
+  const eckit::LocalConfiguration & stateInterpolation() const {return stateInterpolation_;}
 
  private:
   void print(std::ostream &) const;
@@ -91,6 +92,7 @@ class Geometry : public util::Printable,
   atlas::FunctionSpace functionSpace_;
   atlas::FieldSet fields_;
   eckit::LocalConfiguration fieldMasks_;
+  eckit::LocalConfiguration stateInterpolation_;
   std::shared_ptr<FieldsMetadata> fieldsMeta_;
   std::vector<double> ak_;
   std::vector<double> bk_;

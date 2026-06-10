@@ -86,6 +86,8 @@ class GeometryParameters : public oops::Parameters {
   oops::Parameter<std::string> writeGmshFilename{ "gmsh filename", "out.msh", this};
   oops::OptionalParameter<eckit::LocalConfiguration> fieldInterpMethods{
     "field interpolation methods", this };
+  oops::OptionalParameter<eckit::LocalConfiguration> stateInterpolation{
+    "state interpolation", this };
 };
 
 // -------------------------------------------------------------------------------------------------
