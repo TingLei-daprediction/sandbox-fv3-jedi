@@ -84,6 +84,8 @@ class Geometry : public util::Printable,
   const int & npz() const {return npz_;}
   const eckit::LocalConfiguration & stateInterpolation() const {return stateInterpolation_;}
 
+  const bool & doVerticalRemapping() const {return doVerticalRemapping_;}
+
  private:
   void print(std::ostream &) const;
 
@@ -101,6 +103,7 @@ class Geometry : public util::Printable,
   int npy_;
   int npz_;
   double pTop_;
+  bool doVerticalRemapping_;
 };
 // -------------------------------------------------------------------------------------------------
 
