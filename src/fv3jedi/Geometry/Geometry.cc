@@ -35,16 +35,6 @@ Geometry::Geometry(const eckit::Configuration & config, const eckit::mpi::Comm &
                    comm_(comm), ak_(), bk_() {
   GeometryParameters params;
   params.deserialize(config);
-
-  stateInterpolation_ = eckit::LocalConfiguration();
-  stateInterpolation_.set("local interpolator type", "oops unstructured grid interpolator");
-  if (params.stateInterpolation.value() != boost::none) {
-    stateInterpolation_ = params.stateInterpolation.value().value();
-    if (!stateInterpolation_.has("local interpolator type")) {
-      stateInterpolation_.set("local interpolator type", "oops unstructured grid interpolator");
-    }
-  }
-
   // Call the initialize phase, done only once.
   static bool initialized = false;
   if (!initialized) {

@@ -168,9 +168,12 @@ void State::changeResolution(const State & other) {
                                        other.geom_.levelsAreTopDown(),
                                        other.geom_.getComm());
   const atlas::FunctionSpace target_fs = geom_.functionSpace();
+  eckit::LocalConfiguration conf;
   // Use oops interpolator to handle integer/categorical fields correctly
-  // unless the user provides an alternate state interpolation configuration.
-  eckit::LocalConfiguration conf(geom_.stateInterpolation());
+  // Once the atlas interpolator gains support for this feature, we could make this configurable
+  // from the user-facing yaml file; for now though, the atlas interpolator would be wrong for the
+  // many integer fields of fv3-jedi.
+  conf.set("local interpolator type", "oops unstructured grid interpolator");
   oops::GlobalInterpolator interp(conf, source_geom, target_fs, geom_.getComm());
 
   atlas::FieldSet source{};
