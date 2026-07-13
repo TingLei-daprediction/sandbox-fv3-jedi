@@ -823,6 +823,10 @@ if( (fields_changed) .or. &
 
     ! Get UFS variable name
     fields(jedi_var_idx)%model_name = ioname(trim(fields(jedi_var_idx)%long_name), field_io_names_local)
+    write(6,'("REG_READ_MAP ",A," -> ",A," index=",I2," file=",A)') &
+      trim(fields(jedi_var_idx)%long_name), &
+      trim(fields(jedi_var_idx)%model_name), &
+      indexrst, trim(self%filenames(indexrst))
 
     ! Append variable name onto list for each file.  Will need a mapping between this list and the order in the fields array
     if (len_trim(tmpvarlist(indexrst)) > 0) then
