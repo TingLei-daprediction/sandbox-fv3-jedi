@@ -69,7 +69,7 @@ endif()
 
 # Intel
 if(CMAKE_Fortran_COMPILER_ID MATCHES Intel)  # Intel or IntelLLVM
-  ecbuild_add_fortran_flags("-ftrapuv -fp-model=precise -fpe-all=0" BUILD DEBUG)
+  ecbuild_add_fortran_flags("-debug full -check uninit -init=snan,arrays -ftrapuv -fp-model=precise -fpe-all=0" BUILD DEBUG)
 endif()
 
 # NAG
