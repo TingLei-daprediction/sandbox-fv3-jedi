@@ -24,6 +24,7 @@ use femps_fv3_mod, only: fv3field_to_ufield, ufield_to_fv3field
 use femps_grid_mod, only: fempsgrid
 use femps_operators_mod, only: fempsoprs
 use femps_solve_mod, only: laplace, inverselaplace
+use, intrinsic :: iso_fortran_env, only: int64
 
 implicit none
 private
@@ -622,6 +623,8 @@ real(kind=kind_real) :: vt(geom%isd:geom%ied  ,geom%jsd:geom%jed+1,1:geom%npz)
 
 ! Fill D-grid winds halo
 ! ----------------------
+ud = 0.0_kind_real
+vd = 0.0_kind_real
 ud(geom%isc:geom%iec  ,geom%jsc:geom%jec+1,1:geom%npz) = ud_in
 vd(geom%isc:geom%iec+1,geom%jsc:geom%jec  ,1:geom%npz) = vd_in
 call fill_dgrid_winds(geom, ud, vd, fillhalo=.true.)
@@ -705,6 +708,8 @@ real(kind=kind_real) :: vt(geom%isd:geom%ied  ,geom%jsd:geom%jed  )
 
 ! Fill halo for input (outside loop for communication efficiency)
 ! ---------------------------------------------------------------
+ud = 0.0_kind_real
+vd = 0.0_kind_real
 ud(geom%isc:geom%iec  ,geom%jsc:geom%jec+1,1:geom%npz) = ud_in
 vd(geom%isc:geom%iec+1,geom%jsc:geom%jec  ,1:geom%npz) = vd_in
 call fill_dgrid_winds(geom, ud, vd, fillhalo=.true.)
@@ -763,6 +768,13 @@ real(kind=kind_real), parameter:: c1 = -2._kind_real/14._kind_real
 real(kind=kind_real), parameter:: c2 = 11._kind_real/14._kind_real
 real(kind=kind_real), parameter:: c3 =  5._kind_real/14._kind_real
 
+integer(int64) :: raw_bits
+integer :: ii, jj
+integer :: nan_count
+
+
+
+
 is  = geom%isc
 ie  = geom%iec
 js  = geom%jsc
@@ -799,6 +811,31 @@ dya       => geom%dya
 ! Initialize the non-existing corner regions
  utmp(:,:) = big_number
  vtmp(:,:) = big_number
+
+
+nan_count = 0
+
+do jj = lbound(u,2), ubound(u,2)
+  do ii = lbound(u,1), ubound(u,1)
+
+    raw_bits = transfer(u(ii,jj), raw_bits)
+
+    ! Exponent bits all 1 and fraction bits nonzero => NaN
+    if (iand(raw_bits, int(z'7ff0000000000000', int64)) == &
+                        int(z'7ff0000000000000', int64) .and. &
+        iand(raw_bits, int(z'000fffffffffffff', int64)) /= 0_int64) then
+
+      nan_count = nan_count + 1
+
+      write(*,'(A,2(I0,1X),A,Z16.16)') &
+        'NaN in u at i,j = ', ii, jj, ' bits = 0x', raw_bits
+    endif
+
+  enddo
+enddo
+
+write(*,*) 'Total NaNs in u = ', nan_count
+flush(6)
 
 if ( geom%bounded_domain ) then
 
