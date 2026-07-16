@@ -639,6 +639,10 @@ enddo
 
  ! Compute ut,vt
  ! -------------
+ vc = 0.0_kind_real
+ vc = 0.0_kind_real
+ ut = 0.0_kind_real
+ vt = 0.0_kind_real
  call fill_cgrid_winds(geom, uc, vc, fillhalo=.true.)
 
  do k = 1,geom%npz
@@ -834,7 +838,7 @@ do jj = lbound(u,2), ubound(u,2)
   enddo
 enddo
 
-write(*,*) 'Total NaNs in u = ', nan_count
+if(nan_count>0) write(*,*) 'Total NaNs in u = ', nan_count
 flush(6)
 
 if ( geom%bounded_domain ) then
