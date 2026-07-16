@@ -639,10 +639,6 @@ enddo
 
  ! Compute ut,vt
  ! -------------
- vc = 0.0_kind_real
- vc = 0.0_kind_real
- ut = 0.0_kind_real
- vt = 0.0_kind_real
  call fill_cgrid_winds(geom, uc, vc, fillhalo=.true.)
 
  do k = 1,geom%npz
@@ -815,6 +811,12 @@ dya       => geom%dya
 ! Initialize the non-existing corner regions
  utmp(:,:) = big_number
  vtmp(:,:) = big_number
+
+! Zero the intent(out) winds: only a band around the compute domain is written
+! below, and on regional boundary ranks the exterior halo is never filled by
+! any halo exchange, so unwritten points must not hold garbage
+ uc(:,:) = 0.0_kind_real
+ vc(:,:) = 0.0_kind_real
 
 
 nan_count = 0
@@ -2058,6 +2060,11 @@ subroutine c_to_t_domain_level(geom, uc, vc, ut, vt, dt)
   jed = geom%jed
   npx = geom%npx
   npy = geom%npy
+
+! Zero the intent(out) winds: not every halo point is written below, and on
+! regional boundary ranks unwritten exterior-halo points must not hold garbage
+  ut(:,:) = 0.0_kind_real
+  vt(:,:) = 0.0_kind_real
 
   if ( geom%grid_type < 3 ) then
 
