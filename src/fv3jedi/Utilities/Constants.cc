@@ -26,6 +26,7 @@ namespace fv3jedi {
     static const double cpdry          = 3.5*rdry;
     static const double rvap           = runiv/h2omw;
     static const double kappa          = rdry/cpdry;
+    static const double p0             = 100000.0;
     static const double epsilon        = h2omw/airmw;
     static const double zvir           = rvap/rdry - 1.;
     static const double lapse_rate     = -0.0065;
@@ -37,15 +38,19 @@ namespace fv3jedi {
         {"pi", M_PI},
         {"tice", 273.16},
         {"constoz", 603447.6},
+        {"ozone_mixing_ratio_conversion_factor", 603447.6},
         {"ps", 101300.0},
         {"grav", grav},
+        {"standard_gravitational_acceleration", grav},  // vader name
         {"airmw", airmw},
         {"h2omw", h2omw},
         {"runiv", runiv},
         {"rdry", rdry},
+        {"gas_constant_of_dry_air", rdry},  // vader name
         {"cpdry", cpdry},
         {"rvap", rvap},
         {"kappa", kappa},
+        {"reference_pressure", p0},
         {"epsilon", epsilon},
         {"zvir", zvir},
         {"lapse_rate", lapse_rate},
